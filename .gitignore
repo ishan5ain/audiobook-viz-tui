@@ -1,0 +1,27 @@
+# Python cache and build output
+__pycache__/
+*.py[cod]
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Test and local tooling artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local runtime state
+.state/
+
+# macOS/editor noise
+.DS_Store
+
+PLAN.md

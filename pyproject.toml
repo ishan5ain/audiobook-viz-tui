@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "audiobook-viz"
+version = "0.1.0"
+description = "Textual TUI audiobook player for chapterized m4a files with subtitles."
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+  "platformdirs>=4.2.0",
+  "textual>=5.3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.4.0",
+]
+
+[project.scripts]
+audiobook-viz = "audiobook_viz.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
