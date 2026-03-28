@@ -32,16 +32,16 @@ class AudiobookVizApp(App[None]):
 
     #main-pane {
         width: 1fr;
-        padding: 1 2;
+        padding: 0 2;
     }
 
     #now_playing {
         height: 5;
         content-align: center middle;
         text-align: center;
-        background: #1b2430;
+        # background: #1b2430;
         # background: black;
-        border: round #3a4a5e;
+        # border: round #3a4a5e;
         margin-bottom: 0;
     }
 
@@ -55,11 +55,12 @@ class AudiobookVizApp(App[None]):
     }
 
     #progress {
-        height: 3;
+        height: 5;
         content-align: center middle;
-        background: #1b2430;
-        border: round #3a4a5e;
-        margin-top: 1;
+        text-align: center;
+        # background: #1b2430;
+        # border: round #3a4a5e;
+        margin-top: 0;
     }
 
     #chapter-drawer {
@@ -351,15 +352,21 @@ class AudiobookVizApp(App[None]):
     def _refresh_progress(self) -> None:
         duration_ms = max(self.playback_state.duration_ms, self.metadata.duration_ms)
         position_ms = min(self.playback_state.position_ms, duration_ms or self.playback_state.position_ms)
+        lines: list[str] = []
+        chapter_line = self._chapter_progress_line(position_ms)
+        if chapter_line is not None:
+            lines.append(chapter_line)
+            lines.append("")
+
         bar = self._build_progress_bar(position_ms, duration_ms)
         offset_label = f"{self.subtitle_offset_ms:+}ms"
         status_prefix = self._progress_status_prefix()
-        info = (
+        lines.append(
             f"{status_prefix}  {self._format_clock(position_ms)} / {self._format_clock(duration_ms)}  "
             f"{bar}  Subtitle size x{self.font_scale:.1f}  Offset {offset_label}  "
             f"Ctx {self.subtitle_context_before}/{self.subtitle_context_after}"
         )
-        self.query_one("#progress", Static).update(info)
+        self.query_one("#progress", Static).update("\n".join(lines))
 
     def _sync_chapter_selection(self) -> None:
         if not self.metadata.chapters:
@@ -437,10 +444,40 @@ class AudiobookVizApp(App[None]):
             return "⏸️  Paused"
         return "▶️  Playing"
 
+    def _chapter_progress_line(self, position_ms: int) -> str | None:
+        if not self.metadata.chapters:
+            return None
+        chapter = self.metadata.chapters[self._resolved_chapter_index()]
+        chapter_duration_ms = max(0, chapter.end_ms - chapter.start_ms)
+        chapter_position_ms = min(max(0, position_ms - chapter.start_ms), chapter_duration_ms)
+        time_label = self._format_chapter_progress_clock(chapter_position_ms, chapter_duration_ms)
+        chapter_bar = self._build_chapter_progress_bar(
+            chapter_position_ms,
+            chapter_duration_ms,
+            time_label=time_label,
+        )
+        return f"{time_label}  {chapter_bar}"
+
     def _build_progress_bar(self, position_ms: int, duration_ms: int) -> str:
+        return self._render_progress_bar(position_ms, duration_ms, width=24)
+
+    def _build_chapter_progress_bar(
+        self,
+        position_ms: int,
+        duration_ms: int,
+        *,
+        time_label: str,
+    ) -> str:
+        progress_widget = self.query_one("#progress", Static)
+        main_pane = self.query_one("#main-pane")
+        row_width = max(progress_widget.size.width, main_pane.size.width)
+        available_width = max(10, row_width - len(time_label) - 8)
+        return self._render_progress_bar(position_ms, duration_ms, width=available_width)
+
+    def _render_progress_bar(self, position_ms: int, duration_ms: int, *, width: int) -> str:
+        width = max(8, width)
         if duration_ms <= 0:
-            return "░" * 24
-        width = 24
+            return "░" * width
         ratio = min(1.0, max(0.0, position_ms / duration_ms))
         filled = int(ratio * width)
         return "█" * filled + "░" * (width - filled)
@@ -450,3 +487,16 @@ class AudiobookVizApp(App[None]):
         hours, remainder = divmod(total_seconds, 3600)
         minutes, seconds = divmod(remainder, 60)
         return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+    def _format_chapter_progress_clock(self, position_ms: int, duration_ms: int) -> str:
+        if position_ms < 3_600_000 and duration_ms < 3_600_000:
+            return (
+                f"{self._format_minutes_seconds(position_ms)} / "
+                f"{self._format_minutes_seconds(duration_ms)}"
+            )
+        return f"{self._format_clock(position_ms)} / {self._format_clock(duration_ms)}"
+
+    def _format_minutes_seconds(self, value_ms: int) -> str:
+        total_seconds = max(0, value_ms // 1000)
+        minutes, seconds = divmod(total_seconds, 60)
+        return f"{minutes:02d}:{seconds:02d}"

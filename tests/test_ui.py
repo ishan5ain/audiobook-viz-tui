@@ -118,6 +118,28 @@ def test_textual_app_survives_first_poll_error(tmp_path: Path) -> None:
     asyncio.run(_run_loading_ui_test(tmp_path))
 
 
+def test_chapter_progress_clock_uses_hour_format_only_when_needed(tmp_path: Path) -> None:
+    audio_path = tmp_path / "book.m4a"
+    audio_path.write_bytes(b"audio")
+    subtitle_path = tmp_path / "book.srt"
+    subtitle_path.write_text("1\n00:00:00,000 --> 00:00:02,000\nHello world\n", encoding="utf-8")
+    app = AudiobookVizApp(
+        metadata=MediaMetadata(
+            audio_path=audio_path,
+            duration_ms=7_200_000,
+            chapters=[Chapter(index=0, title="Long", start_ms=0, end_ms=3_900_000)],
+        ),
+        timeline=SubtitleTimeline([SubtitleCue(0, 2000, "Hello world")]),
+        playback_backend=FakeBackend(),
+        subtitle_path=subtitle_path,
+        state_store=StateStore(tmp_path / "state"),
+        resume_enabled=True,
+    )
+
+    assert app._format_chapter_progress_clock(125_000, 3_500_000) == "02:05 / 58:20"
+    assert app._format_chapter_progress_clock(125_000, 3_900_000) == "00:02:05 / 01:05:00"
+
+
 async def _run_ui_test(tmp_path: Path) -> None:
     audio_path = tmp_path / "book.m4a"
     audio_path.write_bytes(b"audio")
@@ -183,9 +205,19 @@ async def _run_ui_test(tmp_path: Path) -> None:
         assert "Two (2/2)" in str(now_playing.renderable)
         assert ("play_pause", None) in backend.actions
         assert ("seek_relative", 10) in backend.actions
-        assert "Subtitle size x1.2" in str(progress.renderable)
-        assert "Ctx 4/4" in str(progress.renderable)
-        assert "▶️  Playing" in str(progress.renderable)
+        progress_text = str(progress.renderable)
+        progress_lines = progress_text.splitlines()
+        assert len(progress_lines) == 3
+        assert "00:10 / 00:30" in progress_lines[0]
+        assert progress_lines[1] == ""
+        chapter_bar = progress_lines[0].split("  ", maxsplit=1)[1]
+        main_pane = app.query_one("#main-pane")
+        expected_bar_width = max(10, max(progress.size.width, main_pane.size.width) - len("00:10 / 00:30") - 8)
+        assert len(chapter_bar) == expected_bar_width
+        assert "Subtitle size x1.2" in progress_lines[2]
+        assert "Ctx 4/4" in progress_lines[2]
+        assert "▶️  Playing" in progress_lines[2]
+        assert "00:00:40 / 00:01:00" in progress_lines[2]
         subtitle_group = subtitle_panel.renderable.renderable
         subtitle_plain = "\n".join(renderable.plain for renderable in subtitle_group.renderables)
         assert "Hello world" in subtitle_plain
@@ -219,7 +251,12 @@ async def _run_loading_ui_test(tmp_path: Path) -> None:
         assert list(app.query("#status").results()) == []
         assert "book.m4a" in str(now_playing.renderable)
         assert "One (1/1)" in str(now_playing.renderable)
-        assert "⚠️  property unavailable" in str(progress.renderable)
+        progress_text = str(progress.renderable)
+        progress_lines = progress_text.splitlines()
+        assert len(progress_lines) == 3
+        assert "00:00 / 01:00" in progress_lines[0]
+        assert progress_lines[1] == ""
+        assert "⚠️  property unavailable" in progress_lines[2]
 
         await pilot.pause(0.35)
 
@@ -227,8 +264,13 @@ async def _run_loading_ui_test(tmp_path: Path) -> None:
         progress = app.query_one("#progress", Static)
         assert "book.m4a" in str(now_playing.renderable)
         assert "One (1/1)" in str(now_playing.renderable)
-        assert "▶️  Playing" in str(progress.renderable)
-        assert "00:00:02 / 00:01:00" in str(progress.renderable)
+        progress_text = str(progress.renderable)
+        progress_lines = progress_text.splitlines()
+        assert len(progress_lines) == 3
+        assert "00:02 / 01:00" in progress_lines[0]
+        assert progress_lines[1] == ""
+        assert "▶️  Playing" in progress_lines[2]
+        assert "00:00:02 / 00:01:00" in progress_lines[2]
 
     app.shutdown_player()
     assert backend.closed is True
