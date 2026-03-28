@@ -42,6 +42,8 @@ class ResumeState:
     subtitle_offset_ms: int
     subtitle_context_before: int
     subtitle_context_after: int
+    subtitle_display_mode: str
+    book_page_density: float
     subtitle_path: str
 
     def to_dict(self) -> dict[str, object]:
@@ -56,5 +58,7 @@ class ResumeState:
             subtitle_offset_ms=int(data["subtitle_offset_ms"]),
             subtitle_context_before=max(0, int(data.get("subtitle_context_before", 3))),
             subtitle_context_after=max(0, int(data.get("subtitle_context_after", 3))),
+            subtitle_display_mode=str(data.get("subtitle_display_mode", "window")),
+            book_page_density=float(data.get("book_page_density", 1.0)),
             subtitle_path=str(data["subtitle_path"]),
         )

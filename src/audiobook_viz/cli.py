@@ -63,6 +63,10 @@ def main() -> int:
             if args.subtitle_context_after is not None
             else (resume_state.subtitle_context_after if resume_state else 3)
         )
+        initial_subtitle_display_mode = (
+            resume_state.subtitle_display_mode if resume_state else "window"
+        )
+        initial_book_page_density = resume_state.book_page_density if resume_state else 1.0
         start_position_ms = resume_state.position_ms if resume_state else None
         backend = MpvBackend(
             audio_path,
@@ -80,6 +84,8 @@ def main() -> int:
             initial_subtitle_offset_ms=initial_offset_ms,
             initial_subtitle_context_before=initial_context_before,
             initial_subtitle_context_after=initial_context_after,
+            initial_subtitle_display_mode=initial_subtitle_display_mode,
+            initial_book_page_density=initial_book_page_density,
         )
     except (MediaProbeError, PlaybackError, SubtitleParseError, ValueError) as exc:
         parser.exit(2, f"error: {exc}\n")

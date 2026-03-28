@@ -110,12 +110,32 @@ class FlakyBackend(FakeBackend):
         return self.calls > 1
 
 
+def _renderable_plain_text(renderable: object) -> str:
+    if hasattr(renderable, "plain"):
+        return renderable.plain
+    nested = getattr(renderable, "renderable", None)
+    if nested is not None:
+        return _renderable_plain_text(nested)
+    renderables = getattr(renderable, "renderables", None)
+    if renderables is not None:
+        return "\n".join(_renderable_plain_text(item) for item in renderables)
+    return str(renderable)
+
+
 def test_textual_app_smoke(tmp_path: Path) -> None:
     asyncio.run(_run_ui_test(tmp_path))
 
 
 def test_textual_app_survives_first_poll_error(tmp_path: Path) -> None:
     asyncio.run(_run_loading_ui_test(tmp_path))
+
+
+def test_textual_app_book_mode_toggle_and_density_controls(tmp_path: Path) -> None:
+    asyncio.run(_run_book_mode_ui_test(tmp_path))
+
+
+def test_book_mode_turns_page_within_long_paragraph(tmp_path: Path) -> None:
+    asyncio.run(_run_book_mode_paging_regression_test(tmp_path))
 
 
 def test_chapter_progress_clock_uses_hour_format_only_when_needed(tmp_path: Path) -> None:
@@ -274,3 +294,131 @@ async def _run_loading_ui_test(tmp_path: Path) -> None:
 
     app.shutdown_player()
     assert backend.closed is True
+
+
+async def _run_book_mode_ui_test(tmp_path: Path) -> None:
+    audio_path = tmp_path / "book.m4a"
+    audio_path.write_bytes(b"audio")
+    subtitle_path = tmp_path / "book.srt"
+    subtitle_path.write_text(
+        "1\n00:00:00,000 --> 00:00:00,800\nHello\n\n"
+        "2\n00:00:00,900 --> 00:00:01,500\nworld\n\n"
+        "3\n00:00:01,600 --> 00:00:02,200\nagain\n",
+        encoding="utf-8",
+    )
+    app = AudiobookVizApp(
+        metadata=MediaMetadata(
+            audio_path=audio_path,
+            duration_ms=60_000,
+            chapters=[Chapter(index=0, title="One", start_ms=0, end_ms=60_000)],
+        ),
+        timeline=SubtitleTimeline(
+            [
+                SubtitleCue(0, 800, "Hello"),
+                SubtitleCue(900, 1500, "world"),
+                SubtitleCue(1600, 2200, "again"),
+            ]
+        ),
+        playback_backend=FakeBackend(),
+        subtitle_path=subtitle_path,
+        state_store=StateStore(tmp_path / "state"),
+        resume_enabled=True,
+    )
+
+    async with app.run_test() as pilot:
+        progress = app.query_one("#progress", Static)
+        subtitle_panel = app.query_one("#subtitle-panel", Static)
+
+        await pilot.press("m")
+        await pilot.pause()
+        progress_lines = str(progress.renderable).splitlines()
+        assert "Mode book" in progress_lines[2]
+        assert "Book density x1.0" in progress_lines[2]
+        assert app.subtitle_display_mode == "book"
+        assert "Hello world again" in _renderable_plain_text(subtitle_panel.renderable)
+
+        await pilot.press("a")
+        await pilot.pause()
+        progress_lines = str(progress.renderable).splitlines()
+        assert "Book density x1.1" in progress_lines[2]
+        assert app.book_page_density == 1.1
+        assert app.subtitle_context_before == 3
+        assert app.subtitle_context_after == 3
+
+        await pilot.press("m")
+        await pilot.press("a")
+        await pilot.pause()
+        progress_lines = str(progress.renderable).splitlines()
+        assert "Mode window" in progress_lines[2]
+        assert "Ctx 4/3" in progress_lines[2]
+        assert app.subtitle_display_mode == "window"
+
+    app.shutdown_player()
+
+
+async def _run_book_mode_paging_regression_test(tmp_path: Path) -> None:
+    audio_path = tmp_path / "book.m4a"
+    audio_path.write_bytes(b"audio")
+    subtitle_path = tmp_path / "book.srt"
+    cue_texts = [
+        "Albatross bravo",
+        "Charlotte delta",
+        "Evergreen foxtrot",
+        "Jubilation hotel",
+        "Marigold juliet",
+        "Nightfall kilo",
+        "Orchestra lima",
+        "Paragon mike",
+    ]
+    subtitle_path.write_text(
+        "".join(
+            f"{index + 1}\n00:00:{index:02d},000 --> 00:00:{index + 1:02d},000\n{text}\n\n"
+            for index, text in enumerate(cue_texts)
+        ),
+        encoding="utf-8",
+    )
+    backend = FakeBackend()
+    backend.state = PlaybackState(
+        position_ms=500,
+        duration_ms=60_000,
+        paused=False,
+        chapter_index=0,
+    )
+    app = AudiobookVizApp(
+        metadata=MediaMetadata(
+            audio_path=audio_path,
+            duration_ms=60_000,
+            chapters=[Chapter(index=0, title="One", start_ms=0, end_ms=60_000)],
+        ),
+        timeline=SubtitleTimeline(
+            [SubtitleCue(index * 1000, (index + 1) * 1000, text) for index, text in enumerate(cue_texts)]
+        ),
+        playback_backend=backend,
+        subtitle_path=subtitle_path,
+        state_store=StateStore(tmp_path / "state"),
+        resume_enabled=True,
+        initial_font_scale=3.0,
+        initial_subtitle_display_mode="book",
+    )
+
+    async with app.run_test() as pilot:
+        subtitle_panel = app.query_one("#subtitle-panel", Static)
+        await pilot.pause()
+        initial_page_text = _renderable_plain_text(subtitle_panel.renderable)
+        assert "Albatross bravo" in initial_page_text
+        assert "Orchestra lima" not in initial_page_text
+
+        backend.state = PlaybackState(
+            position_ms=6_500,
+            duration_ms=60_000,
+            paused=False,
+            chapter_index=0,
+        )
+        app._poll_backend()
+        await pilot.pause()
+
+        updated_page_text = _renderable_plain_text(subtitle_panel.renderable)
+        assert "Orchestra lima" in updated_page_text
+        assert "Albatross bravo" not in updated_page_text
+
+    app.shutdown_player()
