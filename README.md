@@ -7,7 +7,10 @@ The current build is focused on long-form audiobook playback:
 - audio playback via `mpv` JSON IPC
 - resume state persistence per media file
 - subtitle offset adjustment
-- contextual subtitle window with configurable cue counts before and after the active cue
+- switchable subtitle rendering modes:
+  - `window` mode with configurable cue counts before and after the active cue
+  - `book` mode with merged paragraph-like text, fixed-page reading flow, and persisted page density
+- chapter-local progress row with adaptive progress bar and chapter-relative timing
 - chapter drawer with explicit selection and jump behavior
 
 ## Current Status
@@ -18,14 +21,15 @@ Implemented today:
 - single audiobook + single subtitle file per launch
 - chapter navigation and chapter drawer
 - playback controls, relative seeks, and subtitle offset
-- contextual subtitle rendering around the active cue
-- persisted resume state for playback position, chapter, subtitle settings, and context counts
+- subtitle rendering modes for both cue-window and book-style reading
+- chapter-local and whole-book progress display
+- persisted resume state for playback position, chapter, subtitle settings, subtitle mode, and book density
 - automated test coverage for playback, subtitles, UI behavior, CLI parsing, and state loading
 
 Known constraints:
 - requires external `mpv`
 - requires external `ffprobe`
-- subtitle context is cue-based, not sentence-merged
+- book-mode paragraph grouping is heuristic-driven and based on cue gaps / text size, not full sentence parsing
 - “font size” is a terminal-safe display scaling approximation, not a real font-size change
 
 ## Requirements
@@ -81,6 +85,21 @@ CLI arguments:
 - `--no-resume`: disable persisted resume state
 - `--state-dir`: override the resume-state directory for the current run
 
+## Subtitle Modes
+
+The app currently supports two subtitle display modes that can be switched at runtime:
+
+- `window` mode:
+  - shows the active cue with configurable cue context before and after it
+  - keeps the active cue visually centered
+- `book` mode:
+  - merges adjacent short Whisper cues into paragraph-like reading text
+  - fills the subtitle pane with a fixed "page" of wrapped lines
+  - moves the highlight from top to bottom as playback advances
+  - turns the page when the active cue would move beyond the visible page
+
+Mode, subtitle offset, display scaling, context counts, and book-page density are all restored from resume state by default.
+
 ## Controls
 
 Playback and navigation:
@@ -92,14 +111,21 @@ Playback and navigation:
 - `q`: quit
 
 Subtitle controls:
+- `m`: toggle subtitle mode between `window` and `book`
 - `+` / `-`: subtitle display scaling up / down
 - `[` / `]`: subtitle offset `-250ms` / `+250ms`
-- `a` / `z`: increase / decrease subtitle context-before count
-- `s` / `x`: increase / decrease subtitle context-after count
+- `a` / `z`: in `window` mode, increase / decrease subtitle context-before count
+- `s` / `x`: in `window` mode, increase / decrease subtitle context-after count
+- `a` / `s`: in `book` mode, increase page density
+- `z` / `x`: in `book` mode, decrease page density
 
 Chapter drawer behavior:
 - when the drawer is open, `up` / `down` move the drawer selection
 - the currently playing chapter remains marked separately from the selected row
+
+Progress display:
+- top row: chapter-relative progress with chapter-local position / duration and an adaptive progress bar
+- bottom row: whole-book playback status, global progress bar, subtitle scale, offset, and mode-specific subtitle info
 
 ## Development
 
@@ -123,7 +149,7 @@ Project layout:
 ## Future Work
 
 Useful next iterations:
-- merged-phrase subtitle mode for very short Whisper cues
+- better paragraph heuristics for Whisper subtitle merging and page composition
 - richer chapter drawer styling and search
 - better startup/loading feedback around `mpv` media readiness
 - packaging and release workflow for easier installation
