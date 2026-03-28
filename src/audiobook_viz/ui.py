@@ -14,7 +14,7 @@ from textual.widgets import Footer, Header, Label, ListItem, ListView, Static
 from audiobook_viz.models import MediaMetadata, PlaybackState, ResumeState
 from audiobook_viz.playback import PlaybackBackend, PlaybackError
 from audiobook_viz.state import StateStore
-from audiobook_viz.subtitles import SubtitleTimeline
+from audiobook_viz.subtitles import SubtitleBookPage, SubtitleBookLine, SubtitleTimeline
 
 
 class AudiobookVizApp(App[None]):
@@ -92,6 +92,7 @@ class AudiobookVizApp(App[None]):
         Binding("right", "seek_forward", "+10s"),
         Binding("up", "previous_chapter", "Prev Chapter"),
         Binding("down", "next_chapter", "Next Chapter"),
+        Binding("m", "toggle_subtitle_mode", "Sub Mode"),
         Binding("a", "increase_context_before", "Before+"),
         Binding("z", "decrease_context_before", "Before-"),
         Binding("s", "increase_context_after", "After+"),
@@ -120,6 +121,8 @@ class AudiobookVizApp(App[None]):
         initial_subtitle_offset_ms: int = 0,
         initial_subtitle_context_before: int = 3,
         initial_subtitle_context_after: int = 3,
+        initial_subtitle_display_mode: str = "window",
+        initial_book_page_density: float = 1.0,
     ) -> None:
         super().__init__()
         self.metadata = metadata
@@ -132,6 +135,8 @@ class AudiobookVizApp(App[None]):
         self.subtitle_offset_ms = initial_subtitle_offset_ms
         self.subtitle_context_before = max(0, initial_subtitle_context_before)
         self.subtitle_context_after = max(0, initial_subtitle_context_after)
+        self.subtitle_display_mode = self._coerce_subtitle_display_mode(initial_subtitle_display_mode)
+        self.book_page_density = min(1.3, max(0.7, round(initial_book_page_density, 1)))
         self.playback_state = PlaybackState(
             position_ms=0,
             duration_ms=metadata.duration_ms,
@@ -201,21 +206,33 @@ class AudiobookVizApp(App[None]):
         self._poll_backend()
 
     def action_increase_context_before(self) -> None:
+        if self.subtitle_display_mode == "book":
+            self._adjust_book_page_density(0.1)
+            return
         self.subtitle_context_before = min(12, self.subtitle_context_before + 1)
         self._refresh_subtitle()
         self._refresh_progress()
 
     def action_decrease_context_before(self) -> None:
+        if self.subtitle_display_mode == "book":
+            self._adjust_book_page_density(-0.1)
+            return
         self.subtitle_context_before = max(0, self.subtitle_context_before - 1)
         self._refresh_subtitle()
         self._refresh_progress()
 
     def action_increase_context_after(self) -> None:
+        if self.subtitle_display_mode == "book":
+            self._adjust_book_page_density(0.1)
+            return
         self.subtitle_context_after = min(12, self.subtitle_context_after + 1)
         self._refresh_subtitle()
         self._refresh_progress()
 
     def action_decrease_context_after(self) -> None:
+        if self.subtitle_display_mode == "book":
+            self._adjust_book_page_density(-0.1)
+            return
         self.subtitle_context_after = max(0, self.subtitle_context_after - 1)
         self._refresh_subtitle()
         self._refresh_progress()
@@ -237,6 +254,11 @@ class AudiobookVizApp(App[None]):
 
     def action_subtitle_offset_up(self) -> None:
         self.subtitle_offset_ms += 250
+        self._refresh_subtitle()
+        self._refresh_progress()
+
+    def action_toggle_subtitle_mode(self) -> None:
+        self.subtitle_display_mode = "book" if self.subtitle_display_mode == "window" else "window"
         self._refresh_subtitle()
         self._refresh_progress()
 
@@ -306,10 +328,18 @@ class AudiobookVizApp(App[None]):
                     subtitle_offset_ms=self.subtitle_offset_ms,
                     subtitle_context_before=self.subtitle_context_before,
                     subtitle_context_after=self.subtitle_context_after,
+                    subtitle_display_mode=self.subtitle_display_mode,
+                    book_page_density=self.book_page_density,
                     subtitle_path=str(self.subtitle_path),
                 ),
             )
         self.playback_backend.close()
+
+    def on_resize(self) -> None:
+        if not self.is_mounted:
+            return
+        self._refresh_subtitle()
+        self._refresh_progress()
 
     def _poll_backend(self) -> None:
         try:
@@ -340,14 +370,27 @@ class AudiobookVizApp(App[None]):
         self.query_one("#now_playing", Static).update(f"{audiobook_name}\n\n{chapter_line}")
 
     def _refresh_subtitle(self) -> None:
-        cues, active_index = self.timeline.window_at(
-            self.playback_state.position_ms,
-            subtitle_offset_ms=self.subtitle_offset_ms,
-            before_count=self.subtitle_context_before,
-            after_count=self.subtitle_context_after,
-        )
-        renderable = self._build_subtitle_renderable(cues, active_index)
-        self.query_one("#subtitle-panel", Static).update(Align.center(renderable, vertical="middle"))
+        if self.subtitle_display_mode == "book":
+            wrap_width, line_budget = self._book_layout_metrics()
+            page, active_index = self.timeline.book_page_at(
+                self.playback_state.position_ms,
+                subtitle_offset_ms=self.subtitle_offset_ms,
+                wrap_width=wrap_width,
+                line_budget=line_budget,
+                page_density=self.book_page_density,
+            )
+            renderable = self._build_book_subtitle_renderable(page, active_index)
+            aligned = Align.left(renderable, vertical="top")
+        else:
+            cues, active_index = self.timeline.window_at(
+                self.playback_state.position_ms,
+                subtitle_offset_ms=self.subtitle_offset_ms,
+                before_count=self.subtitle_context_before,
+                after_count=self.subtitle_context_after,
+            )
+            renderable = self._build_window_subtitle_renderable(cues, active_index)
+            aligned = Align.center(renderable, vertical="middle")
+        self.query_one("#subtitle-panel", Static).update(aligned)
 
     def _refresh_progress(self) -> None:
         duration_ms = max(self.playback_state.duration_ms, self.metadata.duration_ms)
@@ -364,7 +407,7 @@ class AudiobookVizApp(App[None]):
         lines.append(
             f"{status_prefix}  {self._format_clock(position_ms)} / {self._format_clock(duration_ms)}  "
             f"{bar}  Subtitle size x{self.font_scale:.1f}  Offset {offset_label}  "
-            f"Ctx {self.subtitle_context_before}/{self.subtitle_context_after}"
+            f"{self._subtitle_progress_details()}"
         )
         self.query_one("#progress", Static).update("\n".join(lines))
 
@@ -386,7 +429,7 @@ class AudiobookVizApp(App[None]):
             prefix = "▶ " if chapter.index == current_index else "  "
             label.update(f"{prefix}{chapter.title}")
 
-    def _build_subtitle_renderable(self, cues: list, active_index: int | None) -> Group | Text:
+    def _build_window_subtitle_renderable(self, cues: list, active_index: int | None) -> Group | Text:
         if not cues:
             return Text("...", justify="center", style="dim")
 
@@ -412,6 +455,58 @@ class AudiobookVizApp(App[None]):
         block_lines = padding + wrapped_lines + padding
         style = "bold #ffffff on #21414f" if is_active else "dim #9cb2c7"
         return Text("\n".join(block_lines), justify="center", style=style)
+
+    def _build_book_subtitle_renderable(
+        self,
+        page: SubtitleBookPage | None,
+        active_cue_index: int | None,
+    ) -> Group | Text:
+        if page is None or not page.lines:
+            return Text("...", justify="left", style="dim")
+
+        blocks: list[Text] = []
+        for line in page.lines:
+            blocks.append(self._format_book_line(line, active_cue_index))
+        return Group(*blocks)
+
+    def _format_book_line(
+        self,
+        line: SubtitleBookLine,
+        active_cue_index: int | None,
+    ) -> Text:
+        if not line.fragments:
+            return Text("")
+
+        rendered = Text(justify="left")
+        default_style = "#c7d5e0"
+        active_style = "bold #ffffff on #21414f"
+        for fragment in line.fragments:
+            style = active_style if fragment.cue_index == active_cue_index else default_style
+            rendered.append(fragment.text, style=style)
+        return rendered
+
+    def _subtitle_progress_details(self) -> str:
+        if self.subtitle_display_mode == "book":
+            return f"Mode book  Book density x{self.book_page_density:.1f}"
+        return (
+            f"Mode window  Ctx {self.subtitle_context_before}/{self.subtitle_context_after}"
+        )
+
+    def _book_layout_metrics(self) -> tuple[int, int]:
+        subtitle_widget = self.query_one("#subtitle-panel", Static)
+        base_width = max(24, subtitle_widget.size.width - 8)
+        density_width = min(1.0, self.book_page_density)
+        wrap_width = max(18, int((base_width * density_width) / self.font_scale))
+        line_budget = max(4, int((max(6, subtitle_widget.size.height - 4)) / self.font_scale))
+        return wrap_width, line_budget
+
+    def _adjust_book_page_density(self, delta: float) -> None:
+        self.book_page_density = min(1.3, max(0.7, round(self.book_page_density + delta, 1)))
+        self._refresh_subtitle()
+        self._refresh_progress()
+
+    def _coerce_subtitle_display_mode(self, value: str) -> str:
+        return value if value in {"window", "book"} else "window"
 
     def _apply_drawer_selection(self) -> None:
         if self._chapter_selection_index is None:

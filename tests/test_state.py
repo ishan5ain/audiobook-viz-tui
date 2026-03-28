@@ -18,6 +18,8 @@ def test_state_store_round_trip(tmp_path: Path) -> None:
         subtitle_offset_ms=-250,
         subtitle_context_before=4,
         subtitle_context_after=2,
+        subtitle_display_mode="book",
+        book_page_density=1.1,
         subtitle_path="/tmp/book.srt",
     )
 
@@ -40,6 +42,8 @@ def test_resume_state_loads_defaults_for_older_state_shape() -> None:
 
     assert resume_state.subtitle_context_before == 3
     assert resume_state.subtitle_context_after == 3
+    assert resume_state.subtitle_display_mode == "window"
+    assert resume_state.book_page_density == 1.0
 
 
 def test_media_identity_changes_when_file_changes(tmp_path: Path) -> None:
