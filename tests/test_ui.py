@@ -45,11 +45,12 @@ class FakeBackend:
 
     def seek_absolute(self, seconds: float) -> None:
         self.actions.append(("seek_absolute", seconds))
+        chapter_index = 1 if seconds >= 30 else 0
         self.state = PlaybackState(
             position_ms=int(seconds * 1000),
             duration_ms=self.state.duration_ms,
             paused=self.state.paused,
-            chapter_index=self.state.chapter_index,
+            chapter_index=chapter_index,
         )
 
     def next_chapter(self) -> None:
@@ -141,8 +142,14 @@ async def _run_ui_test(tmp_path: Path) -> None:
 
     async with app.run_test() as pilot:
         drawer = app.query_one("#chapter-drawer", Container)
+        now_playing = app.query_one("#now_playing", Static)
         assert app._chapter_drawer_open is False
         assert drawer.styles.display == "none"
+        assert list(app.query("#chapter-title").results()) == []
+        assert list(app.query("#status").results()) == []
+        assert "book.m4a" in str(now_playing.renderable)
+        assert "One (1/2)" in str(now_playing.renderable)
+        assert "\n\n" in str(now_playing.renderable)
 
         await pilot.press("c")
         assert app._chapter_drawer_open is True
@@ -170,12 +177,15 @@ async def _run_ui_test(tmp_path: Path) -> None:
         await pilot.press("=")
         await pilot.pause()
 
+        now_playing = app.query_one("#now_playing", Static)
         progress = app.query_one("#progress", Static)
         subtitle_panel = app.query_one("#subtitle-panel", Static)
+        assert "Two (2/2)" in str(now_playing.renderable)
         assert ("play_pause", None) in backend.actions
         assert ("seek_relative", 10) in backend.actions
         assert "Subtitle size x1.2" in str(progress.renderable)
         assert "Ctx 4/4" in str(progress.renderable)
+        assert "▶️  Playing" in str(progress.renderable)
         subtitle_group = subtitle_panel.renderable.renderable
         subtitle_plain = "\n".join(renderable.plain for renderable in subtitle_group.renderables)
         assert "Hello world" in subtitle_plain
@@ -204,14 +214,20 @@ async def _run_loading_ui_test(tmp_path: Path) -> None:
     )
 
     async with app.run_test() as pilot:
-        status = app.query_one("#status", Static)
-        assert "Playback backend error" in str(status.renderable)
+        now_playing = app.query_one("#now_playing", Static)
+        progress = app.query_one("#progress", Static)
+        assert list(app.query("#status").results()) == []
+        assert "book.m4a" in str(now_playing.renderable)
+        assert "One (1/1)" in str(now_playing.renderable)
+        assert "⚠️  property unavailable" in str(progress.renderable)
 
         await pilot.pause(0.35)
 
-        status = app.query_one("#status", Static)
+        now_playing = app.query_one("#now_playing", Static)
         progress = app.query_one("#progress", Static)
-        assert "Playing" in str(status.renderable)
+        assert "book.m4a" in str(now_playing.renderable)
+        assert "One (1/1)" in str(now_playing.renderable)
+        assert "▶️  Playing" in str(progress.renderable)
         assert "00:00:02 / 00:01:00" in str(progress.renderable)
 
     app.shutdown_player()

@@ -35,20 +35,14 @@ class AudiobookVizApp(App[None]):
         padding: 1 2;
     }
 
-    #status {
-        height: 3;
+    #now_playing {
+        height: 5;
         content-align: center middle;
+        text-align: center;
         background: #1b2430;
+        # background: black;
         border: round #3a4a5e;
-        margin-bottom: 1;
-    }
-
-    #chapter-title {
-        height: 3;
-        content-align: center middle;
-        background: #162029;
-        border: round #314557;
-        margin-bottom: 1;
+        margin-bottom: 0;
     }
 
     #subtitle-panel {
@@ -155,8 +149,7 @@ class AudiobookVizApp(App[None]):
         yield Header(show_clock=True)
         with Horizontal(id="body"):
             with Vertical(id="main-pane"):
-                yield Static(id="status")
-                yield Static(id="chapter-title")
+                yield Static(id="now_playing")
                 yield Static(id="subtitle-panel")
                 yield Static(id="progress")
             with Container(id="chapter-drawer", classes="hidden"):
@@ -328,37 +321,22 @@ class AudiobookVizApp(App[None]):
         self._refresh_ui()
 
     def _refresh_ui(self) -> None:
-        self._refresh_status()
-        self._refresh_chapter_title()
+        self._refresh_now_playing()
         self._refresh_chapter_list()
         self._refresh_subtitle()
         self._refresh_progress()
         self._sync_chapter_selection()
 
-    def _refresh_status(self) -> None:
-        if self._backend_error_message is not None:
-            self.query_one("#status", Static).update(f"Playback backend error: {self._backend_error_message}")
-            return
-        if self._backend_loading:
-            self.query_one("#status", Static).update("Loading playback metadata...")
-            return
-        playback = "Paused" if self.playback_state.paused else "Playing"
-        chapter_summary = (
-            f"{len(self.metadata.chapters)} chapters" if self.metadata.chapters else "No chapters"
-        )
-        subtitle_name = self.subtitle_path.name
-        self.query_one("#status", Static).update(
-            f"{playback} | {chapter_summary} | Subtitles: {subtitle_name}"
-        )
-
-    def _refresh_chapter_title(self) -> None:
-        if not self.metadata.chapters or self.playback_state.chapter_index < 0:
-            text = "Chapter navigation unavailable"
+    def _refresh_now_playing(self) -> None:
+        audiobook_name = self.metadata.audio_path.name
+        if not self.metadata.chapters:
+            chapter_line = "Chapter 0/0 | No chapters"
         else:
-            current_index = min(self.playback_state.chapter_index, len(self.metadata.chapters) - 1)
+            current_index = self._resolved_chapter_index()
             chapter = self.metadata.chapters[current_index]
-            text = f"Current chapter: {chapter.title}"
-        self.query_one("#chapter-title", Static).update(text)
+            # chapter_line = f"Chapter {current_index + 1}/{len(self.metadata.chapters)} | {chapter.title}"
+            chapter_line = f"{chapter.title} ({current_index + 1}/{len(self.metadata.chapters)})"
+        self.query_one("#now_playing", Static).update(f"{audiobook_name}\n\n{chapter_line}")
 
     def _refresh_subtitle(self) -> None:
         cues, active_index = self.timeline.window_at(
@@ -375,8 +353,9 @@ class AudiobookVizApp(App[None]):
         position_ms = min(self.playback_state.position_ms, duration_ms or self.playback_state.position_ms)
         bar = self._build_progress_bar(position_ms, duration_ms)
         offset_label = f"{self.subtitle_offset_ms:+}ms"
+        status_prefix = self._progress_status_prefix()
         info = (
-            f"{self._format_clock(position_ms)} / {self._format_clock(duration_ms)}  "
+            f"{status_prefix}  {self._format_clock(position_ms)} / {self._format_clock(duration_ms)}  "
             f"{bar}  Subtitle size x{self.font_scale:.1f}  Offset {offset_label}  "
             f"Ctx {self.subtitle_context_before}/{self.subtitle_context_after}"
         )
@@ -441,6 +420,22 @@ class AudiobookVizApp(App[None]):
         chapter = self.metadata.chapters[chapter_index]
         self.playback_backend.seek_absolute(chapter.start_ms / 1000)
         self._poll_backend()
+
+    def _resolved_chapter_index(self) -> int:
+        if not self.metadata.chapters:
+            return 0
+        if 0 <= self.playback_state.chapter_index < len(self.metadata.chapters):
+            return self.playback_state.chapter_index
+        return 0
+
+    def _progress_status_prefix(self) -> str:
+        if self._backend_error_message is not None:
+            return f"⚠️  {self._backend_error_message}"
+        if self._backend_loading:
+            return "⏳  Loading"
+        if self.playback_state.paused:
+            return "⏸️  Paused"
+        return "▶️  Playing"
 
     def _build_progress_bar(self, position_ms: int, duration_ms: int) -> str:
         if duration_ms <= 0:
