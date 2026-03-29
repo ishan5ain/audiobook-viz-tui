@@ -10,8 +10,9 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Header, Label, ListItem, ListView, Static
+from textual.widgets import Header, Input, Label, ListItem, ListView, Static
 
+from audiobook_viz.colors import DEFAULT_HELP_ACCENT_COLOR, normalize_help_accent_color
 from audiobook_viz.models import MediaMetadata, PlaybackState, ResumeState
 from audiobook_viz.playback import PlaybackBackend, PlaybackError
 from audiobook_viz.state import StateStore
@@ -116,6 +117,39 @@ class AudiobookVizApp(App[None]):
     #help-content {
         color: #d6e0e8;
     }
+
+    AccentColorModal {
+        align: center middle;
+    }
+
+    #accent-color-modal {
+        width: 56;
+        max-width: 90%;
+        height: auto;
+        background: #161d25;
+        border: round #5fb3b3;
+        padding: 1 2;
+    }
+
+    #accent-color-title {
+        color: #ffffff;
+        text-style: bold;
+        margin-bottom: 1;
+    }
+
+    #accent-color-note {
+        color: #93a7b7;
+        margin-bottom: 1;
+    }
+
+    #accent-color-input {
+        margin-bottom: 1;
+    }
+
+    #accent-color-error {
+        color: #ff8a80;
+        min-height: 1;
+    }
     """
 
     BINDINGS = [
@@ -157,6 +191,7 @@ class AudiobookVizApp(App[None]):
         initial_subtitle_context_after: int = 3,
         initial_subtitle_display_mode: str = "window",
         initial_book_page_density: float = 1.0,
+        initial_help_accent_color: str = DEFAULT_HELP_ACCENT_COLOR,
     ) -> None:
         super().__init__()
         self.metadata = metadata
@@ -171,6 +206,10 @@ class AudiobookVizApp(App[None]):
         self.subtitle_context_after = max(0, initial_subtitle_context_after)
         self.subtitle_display_mode = self._coerce_subtitle_display_mode(initial_subtitle_display_mode)
         self.book_page_density = min(1.3, max(0.7, round(initial_book_page_density, 1)))
+        try:
+            self.help_accent_color = normalize_help_accent_color(initial_help_accent_color)
+        except ValueError:
+            self.help_accent_color = DEFAULT_HELP_ACCENT_COLOR
         self.playback_state = PlaybackState(
             position_ms=0,
             duration_ms=metadata.duration_ms,
@@ -299,6 +338,12 @@ class AudiobookVizApp(App[None]):
     def action_show_help(self) -> None:
         self.push_screen(HelpModal())
 
+    def set_help_accent_color(self, value: str) -> None:
+        self.help_accent_color = normalize_help_accent_color(value)
+        if self.is_mounted:
+            self.query_one("#help-bar", Static).update(self._help_bar_renderable())
+            self._refresh_subtitle()
+
     def action_toggle_chapters(self) -> None:
         if not self.metadata.chapters:
             return
@@ -367,6 +412,7 @@ class AudiobookVizApp(App[None]):
                     subtitle_context_after=self.subtitle_context_after,
                     subtitle_display_mode=self.subtitle_display_mode,
                     book_page_density=self.book_page_density,
+                    help_accent_color=self.help_accent_color,
                     subtitle_path=str(self.subtitle_path),
                 ),
             )
@@ -499,7 +545,7 @@ class AudiobookVizApp(App[None]):
         vertical_padding = max(0, int(round((self.font_scale - 1.0) * 2)))
         padding = [""] * vertical_padding
         block_lines = padding + wrapped_lines + padding
-        style = "bold #ffffff on #21414f" if is_active else "dim #9cb2c7"
+        style = f"bold {self.help_accent_color} on #21414f" if is_active else "dim #9cb2c7"
         return Text("\n".join(block_lines), justify="center", style=style)
 
     def _build_book_subtitle_renderable(
@@ -525,7 +571,7 @@ class AudiobookVizApp(App[None]):
 
         rendered = Text(justify="left")
         default_style = "#c7d5e0"
-        active_style = "bold #ffffff on #21414f"
+        active_style = f"bold {self.help_accent_color} on #21414f"
         for fragment in line.fragments:
             style = active_style if fragment.cue_index == active_cue_index else default_style
             rendered.append(fragment.text, style=style)
@@ -572,7 +618,8 @@ class AudiobookVizApp(App[None]):
                 ("m", "Mode"),
                 ("?", "Help"),
                 ("q", "Quit"),
-            ]
+            ],
+            accent_color=self.help_accent_color,
         )
 
     def _apply_drawer_selection(self) -> None:
@@ -680,6 +727,7 @@ class AudiobookVizApp(App[None]):
 
 class HelpModal(ModalScreen[None]):
     BINDINGS = [
+        Binding("e", "edit_help_accent", "Accent", show=False),
         Binding("escape", "close_help", "Close", show=False),
         Binding("q", "close_help", "Close", show=False),
         Binding("question_mark", "close_help", "Close", show=False),
@@ -689,26 +737,90 @@ class HelpModal(ModalScreen[None]):
     def compose(self) -> ComposeResult:
         with Container(id="help-modal"):
             yield Static("Keyboard Help", id="help-title")
-            yield Static(_help_modal_renderable(), id="help-content")
+            yield Static(self._help_content_renderable(), id="help-content")
+
+    def action_edit_help_accent(self) -> None:
+        self.app.push_screen(
+            AccentColorModal(self._app().help_accent_color),
+            callback=self._apply_help_accent_color,
+        )
 
     def action_close_help(self) -> None:
         self.dismiss()
 
+    def _apply_help_accent_color(self, value: str | None) -> None:
+        if value is None:
+            return
+        self._app().set_help_accent_color(value)
+        self._refresh_content()
 
-def _build_key_value_row(items: list[tuple[str, str]]) -> Text:
+    def _app(self) -> AudiobookVizApp:
+        return self.app  # type: ignore[return-value]
+
+    def _help_content_renderable(self) -> Group:
+        return _help_modal_renderable(self._app().help_accent_color)
+
+    def _refresh_content(self) -> None:
+        self.query_one("#help-content", Static).update(self._help_content_renderable())
+
+
+class AccentColorModal(ModalScreen[str | None]):
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel", show=False),
+    ]
+
+    def __init__(self, current_color: str) -> None:
+        super().__init__()
+        self.current_color = current_color
+
+    def compose(self) -> ComposeResult:
+        with Container(id="accent-color-modal"):
+            yield Static("Set Accent Color", id="accent-color-title")
+            yield Static(
+                "Enter #RRGGBB or RRGGBB. Press Enter to apply or Esc to cancel.",
+                id="accent-color-note",
+            )
+            yield Input(self.current_color, placeholder="#ffbd14", id="accent-color-input")
+            yield Static("", id="accent-color-error")
+
+    def on_mount(self) -> None:
+        self.query_one("#accent-color-input", Input).focus()
+
+    def on_input_changed(self, _: Input.Changed) -> None:
+        self.query_one("#accent-color-error", Static).update("")
+
+    def on_input_submitted(self, _: Input.Submitted) -> None:
+        input_widget = self.query_one("#accent-color-input", Input)
+        try:
+            normalized = normalize_help_accent_color(input_widget.value)
+        except ValueError:
+            self.query_one("#accent-color-error", Static).update(
+                "Enter a 6-digit RGB hex code, for example #ffbd14."
+            )
+            return
+        self.dismiss(normalized)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+def _build_key_value_row(items: list[tuple[str, str]], *, accent_color: str) -> Text:
     row = Text(justify="center")
     for index, (key, label) in enumerate(items):
         if index > 0:
             row.append("  |  ", style="dim #5c6c7b")
-        row.append(key, style="bold #ffbd14")
+        row.append(key, style=f"bold {accent_color}")
         row.append(f" {label}", style="#d6e0e8")
     return row
 
 
-def _help_modal_renderable() -> Group:
+def _help_modal_renderable(accent_color: str) -> Group:
     return Group(
         _section_title("Playback"),
-        _help_line([("space", "play/pause"), ("left/right", "seek -10s/+10s"), ("q", "quit")]),
+        _help_line(
+            [("space", "play/pause"), ("left/right", "seek -10s/+10s"), ("q", "quit")],
+            accent_color=accent_color,
+        ),
         Text(""),
         _section_title("Chapters"),
         _help_line(
@@ -716,17 +828,25 @@ def _help_modal_renderable() -> Group:
                 ("c", "toggle drawer"),
                 ("up/down", "chapter or drawer move"),
                 ("enter", "jump to selected chapter"),
-            ]
+            ],
+            accent_color=accent_color,
         ),
         Text(""),
         _section_title("Subtitle Controls"),
-        _help_line([("m", "toggle mode"), ("+/-", "scale"), ("[ ]", "offset")]),
+        _help_line([("m", "toggle mode"), ("+/-", "scale"), ("[ ]", "offset")], accent_color=accent_color),
         Text(""),
         _section_title("Window Mode"),
-        _help_line([("a/z", "context before +/-"), ("s/x", "context after +/-")]),
+        _help_line(
+            [("a/z", "context before +/-"), ("s/x", "context after +/-")],
+            accent_color=accent_color,
+        ),
         Text(""),
         _section_title("Book Mode"),
-        _help_line([("a/s", "density +"), ("z/x", "density -")]),
+        _help_line([("a/s", "density +"), ("z/x", "density -")], accent_color=accent_color),
+        Text(""),
+        _section_title("Help"),
+        _help_line([("e", "edit accent color"), ("esc", "close input dialog")], accent_color=accent_color),
+        Text(f"  Current accent {accent_color}", style="#93a7b7"),
     )
 
 
@@ -734,12 +854,12 @@ def _section_title(title: str) -> Text:
     return Text(title, style="bold #8dc6ff")
 
 
-def _help_line(items: list[tuple[str, str]]) -> Text:
+def _help_line(items: list[tuple[str, str]], *, accent_color: str) -> Text:
     line = Text()
     line.append("  ")
     for index, (key, description) in enumerate(items):
         if index > 0:
             line.append("   ", style="#5c6c7b")
-        line.append(key, style="bold #ffbd14")
+        line.append(key, style=f"bold {accent_color}")
         line.append(f" {description}", style="#d6e0e8")
     return line

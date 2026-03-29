@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from audiobook_viz.colors import DEFAULT_HELP_ACCENT_COLOR
 from audiobook_viz.media import MediaProbeError, probe_media_metadata
 from audiobook_viz.playback import MpvBackend, PlaybackError, ensure_mpv_available
 from audiobook_viz.state import StateStore
@@ -67,6 +68,9 @@ def main() -> int:
             resume_state.subtitle_display_mode if resume_state else "window"
         )
         initial_book_page_density = resume_state.book_page_density if resume_state else 1.0
+        initial_help_accent_color = (
+            resume_state.help_accent_color if resume_state else DEFAULT_HELP_ACCENT_COLOR
+        )
         start_position_ms = resume_state.position_ms if resume_state else None
         backend = MpvBackend(
             audio_path,
@@ -86,6 +90,7 @@ def main() -> int:
             initial_subtitle_context_after=initial_context_after,
             initial_subtitle_display_mode=initial_subtitle_display_mode,
             initial_book_page_density=initial_book_page_density,
+            initial_help_accent_color=initial_help_accent_color,
         )
     except (MediaProbeError, PlaybackError, SubtitleParseError, ValueError) as exc:
         parser.exit(2, f"error: {exc}\n")
