@@ -775,7 +775,7 @@ class AccentColorModal(ModalScreen[str | None]):
 
     def compose(self) -> ComposeResult:
         with Container(id="accent-color-modal"):
-            yield Static("Set Help Accent Color", id="accent-color-title")
+            yield Static("Set Accent Color", id="accent-color-title")
             yield Static(
                 "Enter #RRGGBB or RRGGBB. Press Enter to apply or Esc to cancel.",
                 id="accent-color-note",
