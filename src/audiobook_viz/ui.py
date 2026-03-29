@@ -55,7 +55,7 @@ class AudiobookVizApp(App[None]):
     }
 
     #progress {
-        height: 5;
+        height: 6;
         content-align: center middle;
         text-align: center;
         # background: #1b2430;
@@ -401,12 +401,20 @@ class AudiobookVizApp(App[None]):
             lines.append(chapter_line)
             lines.append("")
 
-        bar = self._build_progress_bar(position_ms, duration_ms)
         offset_label = f"{self.subtitle_offset_ms:+}ms"
         status_prefix = self._progress_status_prefix()
+        time_label = f"{self._format_clock(position_ms)} / {self._format_clock(duration_ms)}"
+        bar = self._build_overall_progress_bar(
+            position_ms,
+            duration_ms,
+            status_prefix=status_prefix,
+            time_label=time_label,
+        )
         lines.append(
-            f"{status_prefix}  {self._format_clock(position_ms)} / {self._format_clock(duration_ms)}  "
-            f"{bar}  Subtitle size x{self.font_scale:.1f}  Offset {offset_label}  "
+            f"{status_prefix}  {time_label}  {bar}"
+        )
+        lines.append(
+            f"Subtitle size x{self.font_scale:.1f}  Offset {offset_label}  "
             f"{self._subtitle_progress_details()}"
         )
         self.query_one("#progress", Static).update("\n".join(lines))
@@ -536,8 +544,8 @@ class AudiobookVizApp(App[None]):
         if self._backend_loading:
             return "⏳  Loading"
         if self.playback_state.paused:
-            return "⏸️  Paused"
-        return "▶️  Playing"
+            return "⏸️"
+        return "▶️"
 
     def _chapter_progress_line(self, position_ms: int) -> str | None:
         if not self.metadata.chapters:
@@ -555,6 +563,20 @@ class AudiobookVizApp(App[None]):
 
     def _build_progress_bar(self, position_ms: int, duration_ms: int) -> str:
         return self._render_progress_bar(position_ms, duration_ms, width=24)
+
+    def _build_overall_progress_bar(
+        self,
+        position_ms: int,
+        duration_ms: int,
+        *,
+        status_prefix: str,
+        time_label: str,
+    ) -> str:
+        progress_widget = self.query_one("#progress", Static)
+        main_pane = self.query_one("#main-pane")
+        row_width = max(progress_widget.size.width, main_pane.size.width)
+        available_width = max(10, row_width - len(status_prefix) - len(time_label) - 10)
+        return self._render_progress_bar(position_ms, duration_ms, width=available_width)
 
     def _build_chapter_progress_bar(
         self,

@@ -227,17 +227,24 @@ async def _run_ui_test(tmp_path: Path) -> None:
         assert ("seek_relative", 10) in backend.actions
         progress_text = str(progress.renderable)
         progress_lines = progress_text.splitlines()
-        assert len(progress_lines) == 3
+        assert len(progress_lines) == 4
         assert "00:10 / 00:30" in progress_lines[0]
         assert progress_lines[1] == ""
         chapter_bar = progress_lines[0].split("  ", maxsplit=1)[1]
         main_pane = app.query_one("#main-pane")
         expected_bar_width = max(10, max(progress.size.width, main_pane.size.width) - len("00:10 / 00:30") - 8)
         assert len(chapter_bar) == expected_bar_width
-        assert "Subtitle size x1.2" in progress_lines[2]
-        assert "Ctx 4/4" in progress_lines[2]
-        assert "▶️  Playing" in progress_lines[2]
+        assert "▶️" in progress_lines[2]
+        assert "Playing" not in progress_lines[2]
         assert "00:00:40 / 00:01:00" in progress_lines[2]
+        overall_bar = progress_lines[2].split("  ", maxsplit=2)[2]
+        expected_overall_bar_width = max(
+            10,
+            max(progress.size.width, main_pane.size.width) - len("▶️") - len("00:00:40 / 00:01:00") - 10,
+        )
+        assert len(overall_bar) == expected_overall_bar_width
+        assert "Subtitle size x1.2" in progress_lines[3]
+        assert "Ctx 4/4" in progress_lines[3]
         subtitle_group = subtitle_panel.renderable.renderable
         subtitle_plain = "\n".join(renderable.plain for renderable in subtitle_group.renderables)
         assert "Hello world" in subtitle_plain
@@ -273,10 +280,11 @@ async def _run_loading_ui_test(tmp_path: Path) -> None:
         assert "One (1/1)" in str(now_playing.renderable)
         progress_text = str(progress.renderable)
         progress_lines = progress_text.splitlines()
-        assert len(progress_lines) == 3
+        assert len(progress_lines) == 4
         assert "00:00 / 01:00" in progress_lines[0]
         assert progress_lines[1] == ""
         assert "⚠️  property unavailable" in progress_lines[2]
+        assert "Subtitle size x1.0" in progress_lines[3]
 
         await pilot.pause(0.35)
 
@@ -286,11 +294,13 @@ async def _run_loading_ui_test(tmp_path: Path) -> None:
         assert "One (1/1)" in str(now_playing.renderable)
         progress_text = str(progress.renderable)
         progress_lines = progress_text.splitlines()
-        assert len(progress_lines) == 3
+        assert len(progress_lines) == 4
         assert "00:02 / 01:00" in progress_lines[0]
         assert progress_lines[1] == ""
-        assert "▶️  Playing" in progress_lines[2]
+        assert "▶️" in progress_lines[2]
+        assert "Playing" not in progress_lines[2]
         assert "00:00:02 / 00:01:00" in progress_lines[2]
+        assert "Subtitle size x1.0" in progress_lines[3]
 
     app.shutdown_player()
     assert backend.closed is True
@@ -332,15 +342,15 @@ async def _run_book_mode_ui_test(tmp_path: Path) -> None:
         await pilot.press("m")
         await pilot.pause()
         progress_lines = str(progress.renderable).splitlines()
-        assert "Mode book" in progress_lines[2]
-        assert "Book density x1.0" in progress_lines[2]
+        assert "Mode book" in progress_lines[3]
+        assert "Book density x1.0" in progress_lines[3]
         assert app.subtitle_display_mode == "book"
         assert "Hello world again" in _renderable_plain_text(subtitle_panel.renderable)
 
         await pilot.press("a")
         await pilot.pause()
         progress_lines = str(progress.renderable).splitlines()
-        assert "Book density x1.1" in progress_lines[2]
+        assert "Book density x1.1" in progress_lines[3]
         assert app.book_page_density == 1.1
         assert app.subtitle_context_before == 3
         assert app.subtitle_context_after == 3
@@ -349,8 +359,8 @@ async def _run_book_mode_ui_test(tmp_path: Path) -> None:
         await pilot.press("a")
         await pilot.pause()
         progress_lines = str(progress.renderable).splitlines()
-        assert "Mode window" in progress_lines[2]
-        assert "Ctx 4/3" in progress_lines[2]
+        assert "Mode window" in progress_lines[3]
+        assert "Ctx 4/3" in progress_lines[3]
         assert app.subtitle_display_mode == "window"
 
     app.shutdown_player()
