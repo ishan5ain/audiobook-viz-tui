@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from audiobook_viz.colors import DEFAULT_HELP_ACCENT_COLOR, normalize_help_accent_color
+
 
 @dataclass(slots=True, frozen=True)
 class Chapter:
@@ -44,6 +46,7 @@ class ResumeState:
     subtitle_context_after: int
     subtitle_display_mode: str
     book_page_density: float
+    help_accent_color: str
     subtitle_path: str
 
     def to_dict(self) -> dict[str, object]:
@@ -51,6 +54,11 @@ class ResumeState:
 
     @classmethod
     def from_dict(cls, data: dict[str, object]) -> "ResumeState":
+        help_accent_value = str(data.get("help_accent_color", DEFAULT_HELP_ACCENT_COLOR))
+        try:
+            help_accent_color = normalize_help_accent_color(help_accent_value)
+        except ValueError:
+            help_accent_color = DEFAULT_HELP_ACCENT_COLOR
         return cls(
             position_ms=int(data["position_ms"]),
             chapter_index=int(data["chapter_index"]),
@@ -60,5 +68,6 @@ class ResumeState:
             subtitle_context_after=max(0, int(data.get("subtitle_context_after", 3))),
             subtitle_display_mode=str(data.get("subtitle_display_mode", "window")),
             book_page_density=float(data.get("book_page_density", 1.0)),
+            help_accent_color=help_accent_color,
             subtitle_path=str(data["subtitle_path"]),
         )

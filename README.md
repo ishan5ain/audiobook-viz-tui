@@ -23,7 +23,7 @@ Implemented today:
 - playback controls, relative seeks, and subtitle offset
 - subtitle rendering modes for both cue-window and book-style reading
 - chapter-local and whole-book progress display
-- persisted resume state for playback position, chapter, subtitle settings, subtitle mode, and book density
+- persisted resume state for playback position, chapter, subtitle settings, subtitle mode, book density, and help accent color
 - automated test coverage for playback, subtitles, UI behavior, CLI parsing, and state loading
 
 Known constraints:
@@ -98,7 +98,7 @@ The app currently supports two subtitle display modes that can be switched at ru
   - moves the highlight from top to bottom as playback advances
   - turns the page when the active cue would move beyond the visible page
 
-Mode, subtitle offset, display scaling, context counts, and book-page density are all restored from resume state by default.
+Mode, subtitle offset, display scaling, context counts, book-page density, and help accent color are all restored from resume state by default.
 
 ## Controls
 
@@ -122,6 +122,10 @@ Subtitle controls:
 Chapter drawer behavior:
 - when the drawer is open, `up` / `down` move the drawer selection
 - the currently playing chapter remains marked separately from the selected row
+
+Help customization:
+- while the keyboard help modal is open, press `e` to edit the help accent color
+- enter `#RRGGBB` or `RRGGBB`; the app normalizes it, applies it to help UI accents and the active subtitle cue, and restores it on resume
 
 Progress display:
 - top row: chapter-relative progress with chapter-local position / duration and an adaptive progress bar

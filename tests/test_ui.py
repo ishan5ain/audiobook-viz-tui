@@ -4,7 +4,7 @@ import asyncio
 from pathlib import Path
 
 from textual.containers import Container
-from textual.widgets import Label, ListView, Static
+from textual.widgets import Input, Label, ListView, Static
 
 from audiobook_viz.models import Chapter, MediaMetadata, PlaybackState, SubtitleCue
 from audiobook_viz.playback import PlaybackError
@@ -122,6 +122,24 @@ def _renderable_plain_text(renderable: object) -> str:
     return str(renderable)
 
 
+def _renderable_styles(renderable: object) -> list[str]:
+    styles: list[str] = []
+    style = getattr(renderable, "style", None)
+    if style is not None:
+        styles.append(str(style))
+    spans = getattr(renderable, "spans", None)
+    if spans is not None:
+        styles.extend(str(span.style) for span in spans if span.style is not None)
+    nested = getattr(renderable, "renderable", None)
+    if nested is not None:
+        styles.extend(_renderable_styles(nested))
+    renderables = getattr(renderable, "renderables", None)
+    if renderables is not None:
+        for item in renderables:
+            styles.extend(_renderable_styles(item))
+    return styles
+
+
 def test_textual_app_smoke(tmp_path: Path) -> None:
     asyncio.run(_run_ui_test(tmp_path))
 
@@ -158,6 +176,10 @@ def test_chapter_progress_clock_uses_hour_format_only_when_needed(tmp_path: Path
 
     assert app._format_chapter_progress_clock(125_000, 3_500_000) == "02:05 / 58:20"
     assert app._format_chapter_progress_clock(125_000, 3_900_000) == "00:02:05 / 01:05:00"
+
+
+def test_help_accent_color_can_be_updated_and_persisted(tmp_path: Path) -> None:
+    asyncio.run(_run_help_accent_color_ui_test(tmp_path))
 
 
 def test_help_bar_text_is_compact() -> None:
@@ -217,6 +239,10 @@ async def _run_ui_test(tmp_path: Path) -> None:
         assert "↑/↓ Chapter" in str(help_bar.renderable)
         assert "Space Play" in str(help_bar.renderable)
         assert "? Help" in str(help_bar.renderable)
+        assert "bold #ffbd14" in _renderable_styles(help_bar.renderable)
+        assert "bold #ffbd14 on #21414f" in _renderable_styles(
+            app.query_one("#subtitle-panel", Static).renderable
+        )
 
         await pilot.press("?")
         await pilot.pause()
@@ -224,6 +250,7 @@ async def _run_ui_test(tmp_path: Path) -> None:
         assert isinstance(help_modal, HelpModal)
         assert "Keyboard Help" in _renderable_plain_text(help_modal.query_one("#help-title", Static).renderable)
         assert "Window Mode" in _renderable_plain_text(help_modal.query_one("#help-content", Static).renderable)
+        assert "bold #ffbd14" in _renderable_styles(help_modal.query_one("#help-content", Static).renderable)
         await pilot.press("escape")
         await pilot.pause()
         assert not isinstance(app.screen_stack[-1], HelpModal)
@@ -384,6 +411,7 @@ async def _run_book_mode_ui_test(tmp_path: Path) -> None:
         assert "Book density x1.0" in progress_lines[3]
         assert app.subtitle_display_mode == "book"
         assert "Hello world again" in _renderable_plain_text(subtitle_panel.renderable)
+        assert "bold #ffbd14 on #21414f" in _renderable_styles(subtitle_panel.renderable)
 
         await pilot.press("a")
         await pilot.pause()
@@ -479,3 +507,106 @@ async def _run_book_mode_paging_regression_test(tmp_path: Path) -> None:
         assert "Albatross bravo" not in updated_page_text
 
     app.shutdown_player()
+
+
+async def _run_help_accent_color_ui_test(tmp_path: Path) -> None:
+    audio_path = tmp_path / "book.m4a"
+    audio_path.write_bytes(b"audio")
+    subtitle_path = tmp_path / "book.srt"
+    subtitle_path.write_text("1\n00:00:00,000 --> 00:00:02,000\nHello world\n", encoding="utf-8")
+    state_store = StateStore(tmp_path / "state")
+    backend = FakeBackend()
+    app = AudiobookVizApp(
+        metadata=MediaMetadata(
+            audio_path=audio_path,
+            duration_ms=60_000,
+            chapters=[Chapter(index=0, title="One", start_ms=0, end_ms=60_000)],
+        ),
+        timeline=SubtitleTimeline([SubtitleCue(0, 2000, "Hello world")]),
+        playback_backend=backend,
+        subtitle_path=subtitle_path,
+        state_store=state_store,
+        resume_enabled=True,
+    )
+
+    async with app.run_test() as pilot:
+        help_bar = app.query_one("#help-bar", Static)
+        assert "bold #ffbd14" in _renderable_styles(help_bar.renderable)
+
+        await pilot.press("?")
+        await pilot.pause()
+        help_modal = app.screen_stack[-1]
+        assert isinstance(help_modal, HelpModal)
+        help_content = help_modal.query_one("#help-content", Static)
+        assert "Current accent #ffbd14" in _renderable_plain_text(help_content.renderable)
+        assert "bold #ffbd14" in _renderable_styles(help_content.renderable)
+        assert "bold #ffbd14 on #21414f" in _renderable_styles(app.query_one("#subtitle-panel", Static).renderable)
+
+        await pilot.press("e")
+        await pilot.pause()
+        accent_modal = app.screen_stack[-1]
+        input_widget = accent_modal.query_one("#accent-color-input", Input)
+        assert input_widget.value == "#ffbd14"
+
+        await pilot.press("1", "1", "2", "2", "3", "3", "enter")
+        await pilot.pause()
+        assert isinstance(app.screen_stack[-1], HelpModal)
+        assert app.help_accent_color == "#112233"
+        assert "bold #112233" in _renderable_styles(app.query_one("#help-bar", Static).renderable)
+        assert "bold #112233 on #21414f" in _renderable_styles(app.query_one("#subtitle-panel", Static).renderable)
+        help_modal = app.screen_stack[-1]
+        help_content = help_modal.query_one("#help-content", Static)
+        assert "Current accent #112233" in _renderable_plain_text(help_content.renderable)
+        assert "bold #112233" in _renderable_styles(help_content.renderable)
+
+        await pilot.press("e")
+        await pilot.pause()
+        accent_modal = app.screen_stack[-1]
+        await pilot.press("g", "g", "enter")
+        await pilot.pause()
+        assert accent_modal == app.screen_stack[-1]
+        assert app.help_accent_color == "#112233"
+        error_text = _renderable_plain_text(accent_modal.query_one("#accent-color-error", Static).renderable)
+        assert "Enter a 6-digit RGB hex code" in error_text
+        assert "bold #112233" in _renderable_styles(app.query_one("#help-bar", Static).renderable)
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert isinstance(app.screen_stack[-1], HelpModal)
+
+    app.shutdown_player()
+    assert backend.closed is True
+
+    loaded = state_store.load(audio_path)
+    assert loaded is not None
+    assert loaded.help_accent_color == "#112233"
+
+    restored_app = AudiobookVizApp(
+        metadata=MediaMetadata(
+            audio_path=audio_path,
+            duration_ms=60_000,
+            chapters=[Chapter(index=0, title="One", start_ms=0, end_ms=60_000)],
+        ),
+        timeline=SubtitleTimeline([SubtitleCue(0, 2000, "Hello world")]),
+        playback_backend=FakeBackend(),
+        subtitle_path=subtitle_path,
+        state_store=state_store,
+        resume_enabled=True,
+        initial_help_accent_color=loaded.help_accent_color,
+    )
+
+    async with restored_app.run_test() as pilot:
+        help_bar = restored_app.query_one("#help-bar", Static)
+        assert "bold #112233" in _renderable_styles(help_bar.renderable)
+        await pilot.press("?")
+        await pilot.pause()
+        help_modal = restored_app.screen_stack[-1]
+        assert isinstance(help_modal, HelpModal)
+        help_content = help_modal.query_one("#help-content", Static)
+        assert "Current accent #112233" in _renderable_plain_text(help_content.renderable)
+        assert "bold #112233" in _renderable_styles(help_content.renderable)
+        assert "bold #112233 on #21414f" in _renderable_styles(
+            restored_app.query_one("#subtitle-panel", Static).renderable
+        )
+
+    restored_app.shutdown_player()

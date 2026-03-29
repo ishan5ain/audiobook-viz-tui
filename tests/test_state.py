@@ -20,6 +20,7 @@ def test_state_store_round_trip(tmp_path: Path) -> None:
         subtitle_context_after=2,
         subtitle_display_mode="book",
         book_page_density=1.1,
+        help_accent_color="#112233",
         subtitle_path="/tmp/book.srt",
     )
 
@@ -44,6 +45,33 @@ def test_resume_state_loads_defaults_for_older_state_shape() -> None:
     assert resume_state.subtitle_context_after == 3
     assert resume_state.subtitle_display_mode == "window"
     assert resume_state.book_page_density == 1.0
+    assert resume_state.help_accent_color == "#ffbd14"
+
+
+def test_resume_state_normalizes_invalid_or_unprefixed_help_accent_color() -> None:
+    resume_state = ResumeState.from_dict(
+        {
+            "position_ms": 1000,
+            "chapter_index": 1,
+            "font_scale": 1.1,
+            "subtitle_offset_ms": 0,
+            "help_accent_color": "112233",
+            "subtitle_path": "/tmp/book.srt",
+        }
+    )
+    invalid_resume_state = ResumeState.from_dict(
+        {
+            "position_ms": 1000,
+            "chapter_index": 1,
+            "font_scale": 1.1,
+            "subtitle_offset_ms": 0,
+            "help_accent_color": "oops",
+            "subtitle_path": "/tmp/book.srt",
+        }
+    )
+
+    assert resume_state.help_accent_color == "#112233"
+    assert invalid_resume_state.help_accent_color == "#ffbd14"
 
 
 def test_media_identity_changes_when_file_changes(tmp_path: Path) -> None:
