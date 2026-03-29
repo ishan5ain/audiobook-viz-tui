@@ -173,6 +173,10 @@ def test_help_bar_text_is_compact() -> None:
     assert app._help_bar_text() == (
         "Space Play  |  ←/→ Seek  |  ↑/↓ Chapter  |  c Chaps  |  m Mode  |  ? Help  |  q Quit"
     )
+    app.playback_state = PlaybackState(position_ms=0, duration_ms=1, paused=False, chapter_index=-1)
+    assert app._help_bar_text() == (
+        "Space Pause  |  ←/→ Seek  |  ↑/↓ Chapter  |  c Chaps  |  m Mode  |  ? Help  |  q Quit"
+    )
 
 
 async def _run_ui_test(tmp_path: Path) -> None:
@@ -211,6 +215,7 @@ async def _run_ui_test(tmp_path: Path) -> None:
         assert "\n\n" in str(now_playing.renderable)
         assert "←/→ Seek" in str(help_bar.renderable)
         assert "↑/↓ Chapter" in str(help_bar.renderable)
+        assert "Space Play" in str(help_bar.renderable)
         assert "? Help" in str(help_bar.renderable)
 
         await pilot.press("?")
@@ -252,9 +257,11 @@ async def _run_ui_test(tmp_path: Path) -> None:
         now_playing = app.query_one("#now_playing", Static)
         progress = app.query_one("#progress", Static)
         subtitle_panel = app.query_one("#subtitle-panel", Static)
+        help_bar = app.query_one("#help-bar", Static)
         assert "Two (2/2)" in str(now_playing.renderable)
         assert ("play_pause", None) in backend.actions
         assert ("seek_relative", 10) in backend.actions
+        assert "Space Pause" in str(help_bar.renderable)
         progress_text = str(progress.renderable)
         progress_lines = progress_text.splitlines()
         assert len(progress_lines) == 4

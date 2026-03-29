@@ -555,12 +555,17 @@ class AudiobookVizApp(App[None]):
         return value if value in {"window", "book"} else "window"
 
     def _help_bar_text(self) -> str:
-        return "Space Play  |  ←/→ Seek  |  ↑/↓ Chapter  |  c Chaps  |  m Mode  |  ? Help  |  q Quit"
+        play_label = "Play" if self.playback_state.paused else "Pause"
+        return (
+            f"Space {play_label}  |  ←/→ Seek  |  ↑/↓ Chapter  |  "
+            "c Chaps  |  m Mode  |  ? Help  |  q Quit"
+        )
 
     def _help_bar_renderable(self) -> Text:
+        play_label = "Play" if self.playback_state.paused else "Pause"
         return _build_key_value_row(
             [
-                ("Space", "Play"),
+                ("Space", play_label),
                 ("←/→", "Seek"),
                 ("↑/↓", "Chapter"),
                 ("c", "Chaps"),
