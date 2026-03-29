@@ -195,7 +195,7 @@ class AudiobookVizApp(App[None]):
             with Container(id="chapter-drawer", classes="hidden"):
                 yield Label("Chapters", id="chapter-heading")
                 yield ListView(id="chapter-list")
-        yield Static(self._help_bar_text(), id="help-bar")
+        yield Static(self._help_bar_renderable(), id="help-bar")
 
     def on_mount(self) -> None:
         chapter_list = self.query_one("#chapter-list", ListView)
@@ -455,7 +455,7 @@ class AudiobookVizApp(App[None]):
             f"{self._subtitle_progress_details()}"
         )
         self.query_one("#progress", Static).update("\n".join(lines))
-        self.query_one("#help-bar", Static).update(self._help_bar_text())
+        self.query_one("#help-bar", Static).update(self._help_bar_renderable())
 
     def _sync_chapter_selection(self) -> None:
         if not self.metadata.chapters:
@@ -556,6 +556,19 @@ class AudiobookVizApp(App[None]):
 
     def _help_bar_text(self) -> str:
         return "Space Play  |  ←/→ Seek  |  ↑/↓ Chapter  |  c Chaps  |  m Mode  |  ? Help  |  q Quit"
+
+    def _help_bar_renderable(self) -> Text:
+        return _build_key_value_row(
+            [
+                ("Space", "Play"),
+                ("←/→", "Seek"),
+                ("↑/↓", "Chapter"),
+                ("c", "Chaps"),
+                ("m", "Mode"),
+                ("?", "Help"),
+                ("q", "Quit"),
+            ]
+        )
 
     def _apply_drawer_selection(self) -> None:
         if self._chapter_selection_index is None:
@@ -669,25 +682,59 @@ class HelpModal(ModalScreen[None]):
     ]
 
     def compose(self) -> ComposeResult:
-        help_lines = [
-            "Playback",
-            "  space play/pause   left/right seek -10s/+10s   q quit",
-            "",
-            "Chapters",
-            "  c toggle drawer   up/down chapter or drawer move   enter jump to selected chapter",
-            "",
-            "Subtitle Controls",
-            "  m toggle mode   +/- scale   [ ] offset",
-            "",
-            "Window Mode",
-            "  a/z context before +/-   s/x context after +/-",
-            "",
-            "Book Mode",
-            "  a/s density +   z/x density -",
-        ]
         with Container(id="help-modal"):
             yield Static("Keyboard Help", id="help-title")
-            yield Static("\n".join(help_lines), id="help-content")
+            yield Static(_help_modal_renderable(), id="help-content")
 
     def action_close_help(self) -> None:
         self.dismiss()
+
+
+def _build_key_value_row(items: list[tuple[str, str]]) -> Text:
+    row = Text(justify="center")
+    for index, (key, label) in enumerate(items):
+        if index > 0:
+            row.append("  |  ", style="dim #5c6c7b")
+        row.append(key, style="bold #ffbd14")
+        row.append(f" {label}", style="#d6e0e8")
+    return row
+
+
+def _help_modal_renderable() -> Group:
+    return Group(
+        _section_title("Playback"),
+        _help_line([("space", "play/pause"), ("left/right", "seek -10s/+10s"), ("q", "quit")]),
+        Text(""),
+        _section_title("Chapters"),
+        _help_line(
+            [
+                ("c", "toggle drawer"),
+                ("up/down", "chapter or drawer move"),
+                ("enter", "jump to selected chapter"),
+            ]
+        ),
+        Text(""),
+        _section_title("Subtitle Controls"),
+        _help_line([("m", "toggle mode"), ("+/-", "scale"), ("[ ]", "offset")]),
+        Text(""),
+        _section_title("Window Mode"),
+        _help_line([("a/z", "context before +/-"), ("s/x", "context after +/-")]),
+        Text(""),
+        _section_title("Book Mode"),
+        _help_line([("a/s", "density +"), ("z/x", "density -")]),
+    )
+
+
+def _section_title(title: str) -> Text:
+    return Text(title, style="bold #8dc6ff")
+
+
+def _help_line(items: list[tuple[str, str]]) -> Text:
+    line = Text()
+    line.append("  ")
+    for index, (key, description) in enumerate(items):
+        if index > 0:
+            line.append("   ", style="#5c6c7b")
+        line.append(key, style="bold #ffbd14")
+        line.append(f" {description}", style="#d6e0e8")
+    return line
