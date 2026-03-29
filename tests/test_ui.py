@@ -10,7 +10,7 @@ from audiobook_viz.models import Chapter, MediaMetadata, PlaybackState, Subtitle
 from audiobook_viz.playback import PlaybackError
 from audiobook_viz.state import StateStore
 from audiobook_viz.subtitles import SubtitleTimeline
-from audiobook_viz.ui import AudiobookVizApp
+from audiobook_viz.ui import AudiobookVizApp, HelpModal
 
 
 class FakeBackend:
@@ -160,6 +160,21 @@ def test_chapter_progress_clock_uses_hour_format_only_when_needed(tmp_path: Path
     assert app._format_chapter_progress_clock(125_000, 3_900_000) == "00:02:05 / 01:05:00"
 
 
+def test_help_bar_text_is_compact() -> None:
+    app = AudiobookVizApp(
+        metadata=MediaMetadata(audio_path=Path("book.m4a"), duration_ms=1, chapters=[]),
+        timeline=SubtitleTimeline([]),
+        playback_backend=FakeBackend(),
+        subtitle_path=Path("book.srt"),
+        state_store=None,
+        resume_enabled=False,
+    )
+
+    assert app._help_bar_text() == (
+        "Space Play  |  ←/→ Seek  |  ↑/↓ Chapter  |  c Chaps  |  m Mode  |  ? Help  |  q Quit"
+    )
+
+
 async def _run_ui_test(tmp_path: Path) -> None:
     audio_path = tmp_path / "book.m4a"
     audio_path.write_bytes(b"audio")
@@ -185,13 +200,28 @@ async def _run_ui_test(tmp_path: Path) -> None:
     async with app.run_test() as pilot:
         drawer = app.query_one("#chapter-drawer", Container)
         now_playing = app.query_one("#now_playing", Static)
+        help_bar = app.query_one("#help-bar", Static)
         assert app._chapter_drawer_open is False
         assert drawer.styles.display == "none"
         assert list(app.query("#chapter-title").results()) == []
         assert list(app.query("#status").results()) == []
+        assert list(app.query("Footer").results()) == []
         assert "book.m4a" in str(now_playing.renderable)
         assert "One (1/2)" in str(now_playing.renderable)
         assert "\n\n" in str(now_playing.renderable)
+        assert "←/→ Seek" in str(help_bar.renderable)
+        assert "↑/↓ Chapter" in str(help_bar.renderable)
+        assert "? Help" in str(help_bar.renderable)
+
+        await pilot.press("?")
+        await pilot.pause()
+        help_modal = app.screen_stack[-1]
+        assert isinstance(help_modal, HelpModal)
+        assert "Keyboard Help" in _renderable_plain_text(help_modal.query_one("#help-title", Static).renderable)
+        assert "Window Mode" in _renderable_plain_text(help_modal.query_one("#help-content", Static).renderable)
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not isinstance(app.screen_stack[-1], HelpModal)
 
         await pilot.press("c")
         assert app._chapter_drawer_open is True
@@ -276,6 +306,7 @@ async def _run_loading_ui_test(tmp_path: Path) -> None:
         now_playing = app.query_one("#now_playing", Static)
         progress = app.query_one("#progress", Static)
         assert list(app.query("#status").results()) == []
+        assert list(app.query("Footer").results()) == []
         assert "book.m4a" in str(now_playing.renderable)
         assert "One (1/1)" in str(now_playing.renderable)
         progress_text = str(progress.renderable)
@@ -362,6 +393,15 @@ async def _run_book_mode_ui_test(tmp_path: Path) -> None:
         assert "Mode window" in progress_lines[3]
         assert "Ctx 4/3" in progress_lines[3]
         assert app.subtitle_display_mode == "window"
+
+        await pilot.press("h")
+        await pilot.pause()
+        help_modal = app.screen_stack[-1]
+        assert isinstance(help_modal, HelpModal)
+        assert "Book Mode" in _renderable_plain_text(help_modal.query_one("#help-content", Static).renderable)
+        await pilot.press("h")
+        await pilot.pause()
+        assert not isinstance(app.screen_stack[-1], HelpModal)
 
     app.shutdown_player()
 

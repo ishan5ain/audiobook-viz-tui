@@ -9,7 +9,8 @@ from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
-from textual.widgets import Footer, Header, Label, ListItem, ListView, Static
+from textual.screen import ModalScreen
+from textual.widgets import Header, Label, ListItem, ListView, Static
 
 from audiobook_viz.models import MediaMetadata, PlaybackState, ResumeState
 from audiobook_viz.playback import PlaybackBackend, PlaybackError
@@ -63,6 +64,14 @@ class AudiobookVizApp(App[None]):
         margin-top: 0;
     }
 
+    #help-bar {
+        height: 1;
+        color: #aebbc8;
+        background: #121920;
+        content-align: center middle;
+        text-align: center;
+    }
+
     #chapter-drawer {
         width: 34;
         background: #171d24;
@@ -83,6 +92,29 @@ class AudiobookVizApp(App[None]):
     #chapter-list {
         height: 1fr;
         border: round #3a4a5e;
+    }
+
+    HelpModal {
+        align: center middle;
+    }
+
+    #help-modal {
+        width: 78;
+        max-width: 90%;
+        height: auto;
+        background: #161d25;
+        border: round #5fb3b3;
+        padding: 1 2;
+    }
+
+    #help-title {
+        color: #ffffff;
+        text-style: bold;
+        margin-bottom: 1;
+    }
+
+    #help-content {
+        color: #d6e0e8;
     }
     """
 
@@ -105,6 +137,8 @@ class AudiobookVizApp(App[None]):
         Binding("j", "drawer_down", "Drawer Down", show=False),
         Binding("k", "drawer_up", "Drawer Up", show=False),
         Binding("enter", "select_chapter", "Jump Chapter", show=False),
+        Binding("question_mark", "show_help", "Help"),
+        Binding("h", "show_help", "Help"),
         Binding("q", "quit_app", "Quit"),
     ]
 
@@ -161,7 +195,7 @@ class AudiobookVizApp(App[None]):
             with Container(id="chapter-drawer", classes="hidden"):
                 yield Label("Chapters", id="chapter-heading")
                 yield ListView(id="chapter-list")
-        yield Footer()
+        yield Static(self._help_bar_text(), id="help-bar")
 
     def on_mount(self) -> None:
         chapter_list = self.query_one("#chapter-list", ListView)
@@ -261,6 +295,9 @@ class AudiobookVizApp(App[None]):
         self.subtitle_display_mode = "book" if self.subtitle_display_mode == "window" else "window"
         self._refresh_subtitle()
         self._refresh_progress()
+
+    def action_show_help(self) -> None:
+        self.push_screen(HelpModal())
 
     def action_toggle_chapters(self) -> None:
         if not self.metadata.chapters:
@@ -418,6 +455,7 @@ class AudiobookVizApp(App[None]):
             f"{self._subtitle_progress_details()}"
         )
         self.query_one("#progress", Static).update("\n".join(lines))
+        self.query_one("#help-bar", Static).update(self._help_bar_text())
 
     def _sync_chapter_selection(self) -> None:
         if not self.metadata.chapters:
@@ -515,6 +553,9 @@ class AudiobookVizApp(App[None]):
 
     def _coerce_subtitle_display_mode(self, value: str) -> str:
         return value if value in {"window", "book"} else "window"
+
+    def _help_bar_text(self) -> str:
+        return "Space Play  |  ←/→ Seek  |  ↑/↓ Chapter  |  c Chaps  |  m Mode  |  ? Help  |  q Quit"
 
     def _apply_drawer_selection(self) -> None:
         if self._chapter_selection_index is None:
@@ -617,3 +658,36 @@ class AudiobookVizApp(App[None]):
         total_seconds = max(0, value_ms // 1000)
         minutes, seconds = divmod(total_seconds, 60)
         return f"{minutes:02d}:{seconds:02d}"
+
+
+class HelpModal(ModalScreen[None]):
+    BINDINGS = [
+        Binding("escape", "close_help", "Close", show=False),
+        Binding("q", "close_help", "Close", show=False),
+        Binding("question_mark", "close_help", "Close", show=False),
+        Binding("h", "close_help", "Close", show=False),
+    ]
+
+    def compose(self) -> ComposeResult:
+        help_lines = [
+            "Playback",
+            "  space play/pause   left/right seek -10s/+10s   q quit",
+            "",
+            "Chapters",
+            "  c toggle drawer   up/down chapter or drawer move   enter jump to selected chapter",
+            "",
+            "Subtitle Controls",
+            "  m toggle mode   +/- scale   [ ] offset",
+            "",
+            "Window Mode",
+            "  a/z context before +/-   s/x context after +/-",
+            "",
+            "Book Mode",
+            "  a/s density +   z/x density -",
+        ]
+        with Container(id="help-modal"):
+            yield Static("Keyboard Help", id="help-title")
+            yield Static("\n".join(help_lines), id="help-content")
+
+    def action_close_help(self) -> None:
+        self.dismiss()
