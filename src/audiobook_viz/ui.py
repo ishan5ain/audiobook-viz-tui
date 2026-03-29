@@ -9,7 +9,8 @@ from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
-from textual.widgets import Footer, Header, Label, ListItem, ListView, Static
+from textual.screen import ModalScreen
+from textual.widgets import Header, Label, ListItem, ListView, Static
 
 from audiobook_viz.models import MediaMetadata, PlaybackState, ResumeState
 from audiobook_viz.playback import PlaybackBackend, PlaybackError
@@ -55,12 +56,20 @@ class AudiobookVizApp(App[None]):
     }
 
     #progress {
-        height: 5;
+        height: 6;
         content-align: center middle;
         text-align: center;
         # background: #1b2430;
         # border: round #3a4a5e;
         margin-top: 0;
+    }
+
+    #help-bar {
+        height: 1;
+        color: #aebbc8;
+        background: #121920;
+        content-align: center middle;
+        text-align: center;
     }
 
     #chapter-drawer {
@@ -84,6 +93,29 @@ class AudiobookVizApp(App[None]):
         height: 1fr;
         border: round #3a4a5e;
     }
+
+    HelpModal {
+        align: center middle;
+    }
+
+    #help-modal {
+        width: 78;
+        max-width: 90%;
+        height: auto;
+        background: #161d25;
+        border: round #5fb3b3;
+        padding: 1 2;
+    }
+
+    #help-title {
+        color: #ffffff;
+        text-style: bold;
+        margin-bottom: 1;
+    }
+
+    #help-content {
+        color: #d6e0e8;
+    }
     """
 
     BINDINGS = [
@@ -105,6 +137,8 @@ class AudiobookVizApp(App[None]):
         Binding("j", "drawer_down", "Drawer Down", show=False),
         Binding("k", "drawer_up", "Drawer Up", show=False),
         Binding("enter", "select_chapter", "Jump Chapter", show=False),
+        Binding("question_mark", "show_help", "Help"),
+        Binding("h", "show_help", "Help"),
         Binding("q", "quit_app", "Quit"),
     ]
 
@@ -161,7 +195,7 @@ class AudiobookVizApp(App[None]):
             with Container(id="chapter-drawer", classes="hidden"):
                 yield Label("Chapters", id="chapter-heading")
                 yield ListView(id="chapter-list")
-        yield Footer()
+        yield Static(self._help_bar_renderable(), id="help-bar")
 
     def on_mount(self) -> None:
         chapter_list = self.query_one("#chapter-list", ListView)
@@ -261,6 +295,9 @@ class AudiobookVizApp(App[None]):
         self.subtitle_display_mode = "book" if self.subtitle_display_mode == "window" else "window"
         self._refresh_subtitle()
         self._refresh_progress()
+
+    def action_show_help(self) -> None:
+        self.push_screen(HelpModal())
 
     def action_toggle_chapters(self) -> None:
         if not self.metadata.chapters:
@@ -401,15 +438,24 @@ class AudiobookVizApp(App[None]):
             lines.append(chapter_line)
             lines.append("")
 
-        bar = self._build_progress_bar(position_ms, duration_ms)
         offset_label = f"{self.subtitle_offset_ms:+}ms"
         status_prefix = self._progress_status_prefix()
+        time_label = f"{self._format_clock(position_ms)} / {self._format_clock(duration_ms)}"
+        bar = self._build_overall_progress_bar(
+            position_ms,
+            duration_ms,
+            status_prefix=status_prefix,
+            time_label=time_label,
+        )
         lines.append(
-            f"{status_prefix}  {self._format_clock(position_ms)} / {self._format_clock(duration_ms)}  "
-            f"{bar}  Subtitle size x{self.font_scale:.1f}  Offset {offset_label}  "
+            f"{status_prefix}  {time_label}  {bar}"
+        )
+        lines.append(
+            f"Subtitle size x{self.font_scale:.1f}  Offset {offset_label}  "
             f"{self._subtitle_progress_details()}"
         )
         self.query_one("#progress", Static).update("\n".join(lines))
+        self.query_one("#help-bar", Static).update(self._help_bar_renderable())
 
     def _sync_chapter_selection(self) -> None:
         if not self.metadata.chapters:
@@ -508,6 +554,27 @@ class AudiobookVizApp(App[None]):
     def _coerce_subtitle_display_mode(self, value: str) -> str:
         return value if value in {"window", "book"} else "window"
 
+    def _help_bar_text(self) -> str:
+        play_label = "Play" if self.playback_state.paused else "Pause"
+        return (
+            f"Space {play_label}  |  ←/→ Seek  |  ↑/↓ Chapter  |  "
+            "c Chaps  |  m Mode  |  ? Help  |  q Quit"
+        )
+
+    def _help_bar_renderable(self) -> Text:
+        play_label = "Play" if self.playback_state.paused else "Pause"
+        return _build_key_value_row(
+            [
+                ("Space", play_label),
+                ("←/→", "Seek"),
+                ("↑/↓", "Chapter"),
+                ("c", "Chaps"),
+                ("m", "Mode"),
+                ("?", "Help"),
+                ("q", "Quit"),
+            ]
+        )
+
     def _apply_drawer_selection(self) -> None:
         if self._chapter_selection_index is None:
             return
@@ -536,8 +603,8 @@ class AudiobookVizApp(App[None]):
         if self._backend_loading:
             return "⏳  Loading"
         if self.playback_state.paused:
-            return "⏸️  Paused"
-        return "▶️  Playing"
+            return "⏸️"
+        return "▶️"
 
     def _chapter_progress_line(self, position_ms: int) -> str | None:
         if not self.metadata.chapters:
@@ -555,6 +622,20 @@ class AudiobookVizApp(App[None]):
 
     def _build_progress_bar(self, position_ms: int, duration_ms: int) -> str:
         return self._render_progress_bar(position_ms, duration_ms, width=24)
+
+    def _build_overall_progress_bar(
+        self,
+        position_ms: int,
+        duration_ms: int,
+        *,
+        status_prefix: str,
+        time_label: str,
+    ) -> str:
+        progress_widget = self.query_one("#progress", Static)
+        main_pane = self.query_one("#main-pane")
+        row_width = max(progress_widget.size.width, main_pane.size.width)
+        available_width = max(10, row_width - len(status_prefix) - len(time_label) - 10)
+        return self._render_progress_bar(position_ms, duration_ms, width=available_width)
 
     def _build_chapter_progress_bar(
         self,
@@ -595,3 +676,70 @@ class AudiobookVizApp(App[None]):
         total_seconds = max(0, value_ms // 1000)
         minutes, seconds = divmod(total_seconds, 60)
         return f"{minutes:02d}:{seconds:02d}"
+
+
+class HelpModal(ModalScreen[None]):
+    BINDINGS = [
+        Binding("escape", "close_help", "Close", show=False),
+        Binding("q", "close_help", "Close", show=False),
+        Binding("question_mark", "close_help", "Close", show=False),
+        Binding("h", "close_help", "Close", show=False),
+    ]
+
+    def compose(self) -> ComposeResult:
+        with Container(id="help-modal"):
+            yield Static("Keyboard Help", id="help-title")
+            yield Static(_help_modal_renderable(), id="help-content")
+
+    def action_close_help(self) -> None:
+        self.dismiss()
+
+
+def _build_key_value_row(items: list[tuple[str, str]]) -> Text:
+    row = Text(justify="center")
+    for index, (key, label) in enumerate(items):
+        if index > 0:
+            row.append("  |  ", style="dim #5c6c7b")
+        row.append(key, style="bold #ffbd14")
+        row.append(f" {label}", style="#d6e0e8")
+    return row
+
+
+def _help_modal_renderable() -> Group:
+    return Group(
+        _section_title("Playback"),
+        _help_line([("space", "play/pause"), ("left/right", "seek -10s/+10s"), ("q", "quit")]),
+        Text(""),
+        _section_title("Chapters"),
+        _help_line(
+            [
+                ("c", "toggle drawer"),
+                ("up/down", "chapter or drawer move"),
+                ("enter", "jump to selected chapter"),
+            ]
+        ),
+        Text(""),
+        _section_title("Subtitle Controls"),
+        _help_line([("m", "toggle mode"), ("+/-", "scale"), ("[ ]", "offset")]),
+        Text(""),
+        _section_title("Window Mode"),
+        _help_line([("a/z", "context before +/-"), ("s/x", "context after +/-")]),
+        Text(""),
+        _section_title("Book Mode"),
+        _help_line([("a/s", "density +"), ("z/x", "density -")]),
+    )
+
+
+def _section_title(title: str) -> Text:
+    return Text(title, style="bold #8dc6ff")
+
+
+def _help_line(items: list[tuple[str, str]]) -> Text:
+    line = Text()
+    line.append("  ")
+    for index, (key, description) in enumerate(items):
+        if index > 0:
+            line.append("   ", style="#5c6c7b")
+        line.append(key, style="bold #ffbd14")
+        line.append(f" {description}", style="#d6e0e8")
+    return line

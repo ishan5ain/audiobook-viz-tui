@@ -10,7 +10,7 @@ from audiobook_viz.models import Chapter, MediaMetadata, PlaybackState, Subtitle
 from audiobook_viz.playback import PlaybackError
 from audiobook_viz.state import StateStore
 from audiobook_viz.subtitles import SubtitleTimeline
-from audiobook_viz.ui import AudiobookVizApp
+from audiobook_viz.ui import AudiobookVizApp, HelpModal
 
 
 class FakeBackend:
@@ -160,6 +160,25 @@ def test_chapter_progress_clock_uses_hour_format_only_when_needed(tmp_path: Path
     assert app._format_chapter_progress_clock(125_000, 3_900_000) == "00:02:05 / 01:05:00"
 
 
+def test_help_bar_text_is_compact() -> None:
+    app = AudiobookVizApp(
+        metadata=MediaMetadata(audio_path=Path("book.m4a"), duration_ms=1, chapters=[]),
+        timeline=SubtitleTimeline([]),
+        playback_backend=FakeBackend(),
+        subtitle_path=Path("book.srt"),
+        state_store=None,
+        resume_enabled=False,
+    )
+
+    assert app._help_bar_text() == (
+        "Space Play  |  ←/→ Seek  |  ↑/↓ Chapter  |  c Chaps  |  m Mode  |  ? Help  |  q Quit"
+    )
+    app.playback_state = PlaybackState(position_ms=0, duration_ms=1, paused=False, chapter_index=-1)
+    assert app._help_bar_text() == (
+        "Space Pause  |  ←/→ Seek  |  ↑/↓ Chapter  |  c Chaps  |  m Mode  |  ? Help  |  q Quit"
+    )
+
+
 async def _run_ui_test(tmp_path: Path) -> None:
     audio_path = tmp_path / "book.m4a"
     audio_path.write_bytes(b"audio")
@@ -185,13 +204,29 @@ async def _run_ui_test(tmp_path: Path) -> None:
     async with app.run_test() as pilot:
         drawer = app.query_one("#chapter-drawer", Container)
         now_playing = app.query_one("#now_playing", Static)
+        help_bar = app.query_one("#help-bar", Static)
         assert app._chapter_drawer_open is False
         assert drawer.styles.display == "none"
         assert list(app.query("#chapter-title").results()) == []
         assert list(app.query("#status").results()) == []
+        assert list(app.query("Footer").results()) == []
         assert "book.m4a" in str(now_playing.renderable)
         assert "One (1/2)" in str(now_playing.renderable)
         assert "\n\n" in str(now_playing.renderable)
+        assert "←/→ Seek" in str(help_bar.renderable)
+        assert "↑/↓ Chapter" in str(help_bar.renderable)
+        assert "Space Play" in str(help_bar.renderable)
+        assert "? Help" in str(help_bar.renderable)
+
+        await pilot.press("?")
+        await pilot.pause()
+        help_modal = app.screen_stack[-1]
+        assert isinstance(help_modal, HelpModal)
+        assert "Keyboard Help" in _renderable_plain_text(help_modal.query_one("#help-title", Static).renderable)
+        assert "Window Mode" in _renderable_plain_text(help_modal.query_one("#help-content", Static).renderable)
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not isinstance(app.screen_stack[-1], HelpModal)
 
         await pilot.press("c")
         assert app._chapter_drawer_open is True
@@ -222,22 +257,31 @@ async def _run_ui_test(tmp_path: Path) -> None:
         now_playing = app.query_one("#now_playing", Static)
         progress = app.query_one("#progress", Static)
         subtitle_panel = app.query_one("#subtitle-panel", Static)
+        help_bar = app.query_one("#help-bar", Static)
         assert "Two (2/2)" in str(now_playing.renderable)
         assert ("play_pause", None) in backend.actions
         assert ("seek_relative", 10) in backend.actions
+        assert "Space Pause" in str(help_bar.renderable)
         progress_text = str(progress.renderable)
         progress_lines = progress_text.splitlines()
-        assert len(progress_lines) == 3
+        assert len(progress_lines) == 4
         assert "00:10 / 00:30" in progress_lines[0]
         assert progress_lines[1] == ""
         chapter_bar = progress_lines[0].split("  ", maxsplit=1)[1]
         main_pane = app.query_one("#main-pane")
         expected_bar_width = max(10, max(progress.size.width, main_pane.size.width) - len("00:10 / 00:30") - 8)
         assert len(chapter_bar) == expected_bar_width
-        assert "Subtitle size x1.2" in progress_lines[2]
-        assert "Ctx 4/4" in progress_lines[2]
-        assert "▶️  Playing" in progress_lines[2]
+        assert "▶️" in progress_lines[2]
+        assert "Playing" not in progress_lines[2]
         assert "00:00:40 / 00:01:00" in progress_lines[2]
+        overall_bar = progress_lines[2].split("  ", maxsplit=2)[2]
+        expected_overall_bar_width = max(
+            10,
+            max(progress.size.width, main_pane.size.width) - len("▶️") - len("00:00:40 / 00:01:00") - 10,
+        )
+        assert len(overall_bar) == expected_overall_bar_width
+        assert "Subtitle size x1.2" in progress_lines[3]
+        assert "Ctx 4/4" in progress_lines[3]
         subtitle_group = subtitle_panel.renderable.renderable
         subtitle_plain = "\n".join(renderable.plain for renderable in subtitle_group.renderables)
         assert "Hello world" in subtitle_plain
@@ -269,14 +313,16 @@ async def _run_loading_ui_test(tmp_path: Path) -> None:
         now_playing = app.query_one("#now_playing", Static)
         progress = app.query_one("#progress", Static)
         assert list(app.query("#status").results()) == []
+        assert list(app.query("Footer").results()) == []
         assert "book.m4a" in str(now_playing.renderable)
         assert "One (1/1)" in str(now_playing.renderable)
         progress_text = str(progress.renderable)
         progress_lines = progress_text.splitlines()
-        assert len(progress_lines) == 3
+        assert len(progress_lines) == 4
         assert "00:00 / 01:00" in progress_lines[0]
         assert progress_lines[1] == ""
         assert "⚠️  property unavailable" in progress_lines[2]
+        assert "Subtitle size x1.0" in progress_lines[3]
 
         await pilot.pause(0.35)
 
@@ -286,11 +332,13 @@ async def _run_loading_ui_test(tmp_path: Path) -> None:
         assert "One (1/1)" in str(now_playing.renderable)
         progress_text = str(progress.renderable)
         progress_lines = progress_text.splitlines()
-        assert len(progress_lines) == 3
+        assert len(progress_lines) == 4
         assert "00:02 / 01:00" in progress_lines[0]
         assert progress_lines[1] == ""
-        assert "▶️  Playing" in progress_lines[2]
+        assert "▶️" in progress_lines[2]
+        assert "Playing" not in progress_lines[2]
         assert "00:00:02 / 00:01:00" in progress_lines[2]
+        assert "Subtitle size x1.0" in progress_lines[3]
 
     app.shutdown_player()
     assert backend.closed is True
@@ -332,15 +380,15 @@ async def _run_book_mode_ui_test(tmp_path: Path) -> None:
         await pilot.press("m")
         await pilot.pause()
         progress_lines = str(progress.renderable).splitlines()
-        assert "Mode book" in progress_lines[2]
-        assert "Book density x1.0" in progress_lines[2]
+        assert "Mode book" in progress_lines[3]
+        assert "Book density x1.0" in progress_lines[3]
         assert app.subtitle_display_mode == "book"
         assert "Hello world again" in _renderable_plain_text(subtitle_panel.renderable)
 
         await pilot.press("a")
         await pilot.pause()
         progress_lines = str(progress.renderable).splitlines()
-        assert "Book density x1.1" in progress_lines[2]
+        assert "Book density x1.1" in progress_lines[3]
         assert app.book_page_density == 1.1
         assert app.subtitle_context_before == 3
         assert app.subtitle_context_after == 3
@@ -349,9 +397,18 @@ async def _run_book_mode_ui_test(tmp_path: Path) -> None:
         await pilot.press("a")
         await pilot.pause()
         progress_lines = str(progress.renderable).splitlines()
-        assert "Mode window" in progress_lines[2]
-        assert "Ctx 4/3" in progress_lines[2]
+        assert "Mode window" in progress_lines[3]
+        assert "Ctx 4/3" in progress_lines[3]
         assert app.subtitle_display_mode == "window"
+
+        await pilot.press("h")
+        await pilot.pause()
+        help_modal = app.screen_stack[-1]
+        assert isinstance(help_modal, HelpModal)
+        assert "Book Mode" in _renderable_plain_text(help_modal.query_one("#help-content", Static).renderable)
+        await pilot.press("h")
+        await pilot.pause()
+        assert not isinstance(app.screen_stack[-1], HelpModal)
 
     app.shutdown_player()
 
