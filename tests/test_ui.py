@@ -10,7 +10,7 @@ from audiobook_viz.models import Chapter, MediaMetadata, PlaybackState, Subtitle
 from audiobook_viz.playback import PlaybackError
 from audiobook_viz.state import StateStore
 from audiobook_viz.subtitles import SubtitleTimeline
-from audiobook_viz.ui import AudiobookVizApp, HelpModal
+from audiobook_viz.ui import AudiobookVizApp, HelpModal, SleepTimerModal
 
 
 class FakeBackend:
@@ -72,6 +72,7 @@ class FakeBackend:
         )
 
     def set_pause(self, paused: bool) -> None:
+        self.actions.append(("set_pause", paused))
         self.state = PlaybackState(
             position_ms=self.state.position_ms,
             duration_ms=self.state.duration_ms,
@@ -108,6 +109,17 @@ class FlakyBackend(FakeBackend):
 
     def is_state_ready(self) -> bool:
         return self.calls > 1
+
+
+class FakeClock:
+    def __init__(self, now: float = 1_000.0) -> None:
+        self._now = now
+
+    def now(self) -> float:
+        return self._now
+
+    def advance(self, seconds: float) -> None:
+        self._now += seconds
 
 
 def _renderable_plain_text(renderable: object) -> str:
@@ -182,6 +194,44 @@ def test_help_accent_color_can_be_updated_and_persisted(tmp_path: Path) -> None:
     asyncio.run(_run_help_accent_color_ui_test(tmp_path))
 
 
+def test_sleep_timer_modal_and_countdown(tmp_path: Path) -> None:
+    asyncio.run(_run_sleep_timer_ui_test(tmp_path))
+
+
+def test_sleep_timer_ignores_loading_and_backend_errors(tmp_path: Path) -> None:
+    audio_path = tmp_path / "book.m4a"
+    audio_path.write_bytes(b"audio")
+    subtitle_path = tmp_path / "book.srt"
+    subtitle_path.write_text("1\n00:00:00,000 --> 00:00:10,000\nHello world\n", encoding="utf-8")
+    clock = FakeClock()
+    app = AudiobookVizApp(
+        metadata=MediaMetadata(
+            audio_path=audio_path,
+            duration_ms=60_000,
+            chapters=[Chapter(index=0, title="One", start_ms=0, end_ms=60_000)],
+        ),
+        timeline=SubtitleTimeline([SubtitleCue(0, 10000, "Hello world")]),
+        playback_backend=FakeBackend(),
+        subtitle_path=subtitle_path,
+        state_store=None,
+        resume_enabled=False,
+        time_source=clock.now,
+    )
+    app.playback_state = PlaybackState(position_ms=0, duration_ms=60_000, paused=False, chapter_index=0)
+    app.set_sleep_timer_duration_ms(15 * 60 * 1000)
+
+    app._backend_loading = True
+    clock.advance(10)
+    app._update_sleep_timer(clock.now())
+    assert app.sleep_timer_remaining_ms == 15 * 60 * 1000
+
+    app._backend_loading = False
+    app._backend_error_message = "property unavailable"
+    clock.advance(10)
+    app._update_sleep_timer(clock.now())
+    assert app.sleep_timer_remaining_ms == 15 * 60 * 1000
+
+
 def test_help_bar_text_is_compact() -> None:
     app = AudiobookVizApp(
         metadata=MediaMetadata(audio_path=Path("book.m4a"), duration_ms=1, chapters=[]),
@@ -193,11 +243,11 @@ def test_help_bar_text_is_compact() -> None:
     )
 
     assert app._help_bar_text() == (
-        "Space Play  |  ←/→ Seek  |  ↑/↓ Chapter  |  c Chaps  |  m Mode  |  ? Help  |  q Quit"
+        "Space Play  |  ←/→ Seek  |  ↑/↓ Chapter  |  c Chaps  |  m Mode  |  t Sleep  |  ? Help  |  q Quit"
     )
     app.playback_state = PlaybackState(position_ms=0, duration_ms=1, paused=False, chapter_index=-1)
     assert app._help_bar_text() == (
-        "Space Pause  |  ←/→ Seek  |  ↑/↓ Chapter  |  c Chaps  |  m Mode  |  ? Help  |  q Quit"
+        "Space Pause  |  ←/→ Seek  |  ↑/↓ Chapter  |  c Chaps  |  m Mode  |  t Sleep  |  ? Help  |  q Quit"
     )
 
 
@@ -238,6 +288,7 @@ async def _run_ui_test(tmp_path: Path) -> None:
         assert "←/→ Seek" in str(help_bar.renderable)
         assert "↑/↓ Chapter" in str(help_bar.renderable)
         assert "Space Play" in str(help_bar.renderable)
+        assert "t Sleep" in str(help_bar.renderable)
         assert "? Help" in str(help_bar.renderable)
         assert "bold #ffbd14" in _renderable_styles(help_bar.renderable)
         assert "bold #ffbd14 on #21414f" in _renderable_styles(
@@ -249,6 +300,7 @@ async def _run_ui_test(tmp_path: Path) -> None:
         help_modal = app.screen_stack[-1]
         assert isinstance(help_modal, HelpModal)
         assert "Keyboard Help" in _renderable_plain_text(help_modal.query_one("#help-title", Static).renderable)
+        assert "Sleep Timer" in _renderable_plain_text(help_modal.query_one("#help-content", Static).renderable)
         assert "Window Mode" in _renderable_plain_text(help_modal.query_one("#help-content", Static).renderable)
         assert "bold #ffbd14" in _renderable_styles(help_modal.query_one("#help-content", Static).renderable)
         await pilot.press("escape")
@@ -434,6 +486,7 @@ async def _run_book_mode_ui_test(tmp_path: Path) -> None:
         help_modal = app.screen_stack[-1]
         assert isinstance(help_modal, HelpModal)
         assert "Book Mode" in _renderable_plain_text(help_modal.query_one("#help-content", Static).renderable)
+        assert "Sleep Timer" in _renderable_plain_text(help_modal.query_one("#help-content", Static).renderable)
         await pilot.press("h")
         await pilot.pause()
         assert not isinstance(app.screen_stack[-1], HelpModal)
@@ -608,5 +661,160 @@ async def _run_help_accent_color_ui_test(tmp_path: Path) -> None:
         assert "bold #112233 on #21414f" in _renderable_styles(
             restored_app.query_one("#subtitle-panel", Static).renderable
         )
+
+    restored_app.shutdown_player()
+
+
+async def _run_sleep_timer_ui_test(tmp_path: Path) -> None:
+    audio_path = tmp_path / "book.m4a"
+    audio_path.write_bytes(b"audio")
+    subtitle_path = tmp_path / "book.srt"
+    subtitle_path.write_text("1\n00:00:00,000 --> 00:00:10,000\nHello world\n", encoding="utf-8")
+    state_store = StateStore(tmp_path / "state")
+    backend = FakeBackend()
+    clock = FakeClock()
+    app = AudiobookVizApp(
+        metadata=MediaMetadata(
+            audio_path=audio_path,
+            duration_ms=60_000,
+            chapters=[Chapter(index=0, title="One", start_ms=0, end_ms=60_000)],
+        ),
+        timeline=SubtitleTimeline([SubtitleCue(0, 10000, "Hello world")]),
+        playback_backend=backend,
+        subtitle_path=subtitle_path,
+        state_store=state_store,
+        resume_enabled=True,
+        time_source=clock.now,
+    )
+
+    async with app.run_test() as pilot:
+        progress = app.query_one("#progress", Static)
+        progress_lines = str(progress.renderable).splitlines()
+        assert len(progress_lines) == 4
+        assert "Sleep" not in progress_lines[2]
+
+        await pilot.press("t")
+        await pilot.pause()
+        sleep_modal = app.screen_stack[-1]
+        assert isinstance(sleep_modal, SleepTimerModal)
+        sleep_content = sleep_modal.query_one("#sleep-timer-content", Static)
+        assert "Current" in _renderable_plain_text(sleep_content.renderable)
+        assert "Off" in _renderable_plain_text(sleep_content.renderable)
+
+        await pilot.press("t")
+        await pilot.pause()
+        assert not isinstance(app.screen_stack[-1], SleepTimerModal)
+
+        backend.set_pause(False)
+        app._poll_backend()
+        await pilot.pause()
+
+        await pilot.press("t")
+        await pilot.pause()
+        sleep_modal = app.screen_stack[-1]
+        assert isinstance(sleep_modal, SleepTimerModal)
+
+        await pilot.press("up")
+        await pilot.pause()
+        sleep_content = sleep_modal.query_one("#sleep-timer-content", Static)
+        assert "15:00" in _renderable_plain_text(sleep_content.renderable)
+
+        await pilot.press("space")
+        await pilot.pause()
+        assert not isinstance(app.screen_stack[-1], SleepTimerModal)
+        assert app.sleep_timer_remaining_ms == 15 * 60 * 1000
+        progress_lines = str(app.query_one("#progress", Static).renderable).splitlines()
+        assert len(progress_lines) == 4
+        assert "Sleep 15:00" in progress_lines[2]
+        overall_bar = progress_lines[2].split("  ", maxsplit=3)[2]
+        main_pane = app.query_one("#main-pane")
+        expected_bar_width = max(
+            10,
+            max(progress.size.width, main_pane.size.width)
+            - len("▶️")
+            - len("00:00:00 / 00:01:00")
+            - len("Sleep 15:00")
+            - 12,
+        )
+        assert len(overall_bar) == expected_bar_width
+
+        clock.advance(10)
+        app._poll_backend()
+        await pilot.pause()
+        progress_lines = str(app.query_one("#progress", Static).renderable).splitlines()
+        assert "Sleep 14:50" in progress_lines[2]
+
+        backend.set_pause(True)
+        app._poll_backend()
+        await pilot.pause()
+        paused_label = app._sleep_timer_progress_label()
+        assert paused_label == "Sleep 14:50"
+        clock.advance(20)
+        app._poll_backend()
+        await pilot.pause()
+        assert app._sleep_timer_progress_label() == "Sleep 14:50"
+
+        backend.set_pause(False)
+        app._poll_backend()
+        await pilot.pause()
+        clock.advance(890)
+        pause_true_calls_before_expiry = backend.actions.count(("set_pause", True))
+        app._poll_backend()
+        await pilot.pause()
+        assert app.sleep_timer_remaining_ms is None
+        assert backend.actions.count(("set_pause", True)) == pause_true_calls_before_expiry + 1
+        assert backend.state.paused is True
+        progress_lines = str(app.query_one("#progress", Static).renderable).splitlines()
+        assert "Sleep" not in progress_lines[2]
+
+        await pilot.press("t")
+        await pilot.pause()
+        sleep_modal = app.screen_stack[-1]
+        assert isinstance(sleep_modal, SleepTimerModal)
+        await pilot.press("up", "up")
+        await pilot.pause()
+        await pilot.press("space")
+        await pilot.pause()
+        assert app.sleep_timer_remaining_ms == 30 * 60 * 1000
+
+        await pilot.press("t")
+        await pilot.pause()
+        sleep_modal = app.screen_stack[-1]
+        assert isinstance(sleep_modal, SleepTimerModal)
+        await pilot.press("down", "down")
+        await pilot.pause()
+        assert app.sleep_timer_remaining_ms is None
+        sleep_content = sleep_modal.query_one("#sleep-timer-content", Static)
+        assert "Off" in _renderable_plain_text(sleep_content.renderable)
+        await pilot.press("escape")
+        await pilot.pause()
+
+    app.shutdown_player()
+    loaded = state_store.load(audio_path)
+    assert loaded is not None
+
+    restored_app = AudiobookVizApp(
+        metadata=MediaMetadata(
+            audio_path=audio_path,
+            duration_ms=60_000,
+            chapters=[Chapter(index=0, title="One", start_ms=0, end_ms=60_000)],
+        ),
+        timeline=SubtitleTimeline([SubtitleCue(0, 10000, "Hello world")]),
+        playback_backend=FakeBackend(),
+        subtitle_path=subtitle_path,
+        state_store=state_store,
+        resume_enabled=True,
+        time_source=clock.now,
+    )
+
+    async with restored_app.run_test() as pilot:
+        progress_lines = str(restored_app.query_one("#progress", Static).renderable).splitlines()
+        assert "Sleep" not in progress_lines[2]
+        await pilot.press("t")
+        await pilot.pause()
+        sleep_modal = restored_app.screen_stack[-1]
+        assert isinstance(sleep_modal, SleepTimerModal)
+        sleep_content = sleep_modal.query_one("#sleep-timer-content", Static)
+        assert "Off" in _renderable_plain_text(sleep_content.renderable)
 
     restored_app.shutdown_player()

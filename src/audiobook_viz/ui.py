@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import time
 import textwrap
+from collections.abc import Callable
 from pathlib import Path
 
 from rich.align import Align
@@ -150,6 +152,29 @@ class AudiobookVizApp(App[None]):
         color: #ff8a80;
         min-height: 1;
     }
+
+    SleepTimerModal {
+        align: center middle;
+    }
+
+    #sleep-timer-modal {
+        width: 62;
+        max-width: 90%;
+        height: auto;
+        background: #161d25;
+        border: round #5fb3b3;
+        padding: 1 2;
+    }
+
+    #sleep-timer-title {
+        color: #ffffff;
+        text-style: bold;
+        margin-bottom: 1;
+    }
+
+    #sleep-timer-content {
+        color: #d6e0e8;
+    }
     """
 
     BINDINGS = [
@@ -167,6 +192,7 @@ class AudiobookVizApp(App[None]):
         Binding("minus,-", "decrease_font_scale", "Sub-"),
         Binding("[", "subtitle_offset_down", "Offset-"),
         Binding("]", "subtitle_offset_up", "Offset+"),
+        Binding("t", "show_sleep_timer", "Sleep"),
         Binding("c", "toggle_chapters", "Chapters"),
         Binding("j", "drawer_down", "Drawer Down", show=False),
         Binding("k", "drawer_up", "Drawer Up", show=False),
@@ -192,6 +218,7 @@ class AudiobookVizApp(App[None]):
         initial_subtitle_display_mode: str = "window",
         initial_book_page_density: float = 1.0,
         initial_help_accent_color: str = DEFAULT_HELP_ACCENT_COLOR,
+        time_source: Callable[[], float] = time.monotonic,
     ) -> None:
         super().__init__()
         self.metadata = metadata
@@ -200,6 +227,7 @@ class AudiobookVizApp(App[None]):
         self.subtitle_path = subtitle_path
         self.state_store = state_store
         self.resume_enabled = resume_enabled
+        self.time_source = time_source
         self.font_scale = max(1.0, initial_font_scale)
         self.subtitle_offset_ms = initial_subtitle_offset_ms
         self.subtitle_context_before = max(0, initial_subtitle_context_before)
@@ -223,6 +251,8 @@ class AudiobookVizApp(App[None]):
         self._backend_loading = True
         self._backend_error_message: str | None = None
         self._chapter_labels: list[Label] = []
+        self.sleep_timer_remaining_ms: int | None = None
+        self._sleep_timer_last_tick_at: float | None = None
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -338,11 +368,27 @@ class AudiobookVizApp(App[None]):
     def action_show_help(self) -> None:
         self.push_screen(HelpModal())
 
+    def action_show_sleep_timer(self) -> None:
+        self.push_screen(SleepTimerModal())
+
     def set_help_accent_color(self, value: str) -> None:
         self.help_accent_color = normalize_help_accent_color(value)
         if self.is_mounted:
             self.query_one("#help-bar", Static).update(self._help_bar_renderable())
             self._refresh_subtitle()
+
+    def set_sleep_timer_duration_ms(self, duration_ms: int | None) -> None:
+        if duration_ms is None or duration_ms <= 0:
+            self.sleep_timer_remaining_ms = None
+            self._sleep_timer_last_tick_at = None
+        else:
+            self.sleep_timer_remaining_ms = duration_ms
+            self._sleep_timer_last_tick_at = self.time_source()
+        if self.is_mounted and self._screen_stack:
+            self._refresh_progress()
+
+    def cancel_sleep_timer(self) -> None:
+        self.set_sleep_timer_duration_ms(None)
 
     def action_toggle_chapters(self) -> None:
         if not self.metadata.chapters:
@@ -425,6 +471,7 @@ class AudiobookVizApp(App[None]):
         self._refresh_progress()
 
     def _poll_backend(self) -> None:
+        now = self.time_source()
         try:
             self.playback_state = self.playback_backend.get_state()
             self._backend_loading = not self.playback_backend.is_state_ready()
@@ -432,6 +479,7 @@ class AudiobookVizApp(App[None]):
         except PlaybackError as exc:
             self._backend_loading = True
             self._backend_error_message = str(exc)
+        self._update_sleep_timer(now)
         self._refresh_ui()
 
     def _refresh_ui(self) -> None:
@@ -487,15 +535,18 @@ class AudiobookVizApp(App[None]):
         offset_label = f"{self.subtitle_offset_ms:+}ms"
         status_prefix = self._progress_status_prefix()
         time_label = f"{self._format_clock(position_ms)} / {self._format_clock(duration_ms)}"
+        sleep_timer_label = self._sleep_timer_progress_label()
         bar = self._build_overall_progress_bar(
             position_ms,
             duration_ms,
             status_prefix=status_prefix,
             time_label=time_label,
+            extra_label=sleep_timer_label,
         )
-        lines.append(
-            f"{status_prefix}  {time_label}  {bar}"
-        )
+        progress_line = f"{status_prefix}  {time_label}  {bar}"
+        if sleep_timer_label is not None:
+            progress_line += f"  {sleep_timer_label}"
+        lines.append(progress_line)
         lines.append(
             f"Subtitle size x{self.font_scale:.1f}  Offset {offset_label}  "
             f"{self._subtitle_progress_details()}"
@@ -604,7 +655,7 @@ class AudiobookVizApp(App[None]):
         play_label = "Play" if self.playback_state.paused else "Pause"
         return (
             f"Space {play_label}  |  ←/→ Seek  |  ↑/↓ Chapter  |  "
-            "c Chaps  |  m Mode  |  ? Help  |  q Quit"
+            "c Chaps  |  m Mode  |  t Sleep  |  ? Help  |  q Quit"
         )
 
     def _help_bar_renderable(self) -> Text:
@@ -616,6 +667,7 @@ class AudiobookVizApp(App[None]):
                 ("↑/↓", "Chapter"),
                 ("c", "Chaps"),
                 ("m", "Mode"),
+                ("t", "Sleep"),
                 ("?", "Help"),
                 ("q", "Quit"),
             ],
@@ -677,11 +729,15 @@ class AudiobookVizApp(App[None]):
         *,
         status_prefix: str,
         time_label: str,
+        extra_label: str | None = None,
     ) -> str:
         progress_widget = self.query_one("#progress", Static)
         main_pane = self.query_one("#main-pane")
         row_width = max(progress_widget.size.width, main_pane.size.width)
-        available_width = max(10, row_width - len(status_prefix) - len(time_label) - 10)
+        reserved_width = len(status_prefix) + len(time_label) + 10
+        if extra_label is not None:
+            reserved_width += len(extra_label) + 2
+        available_width = max(10, row_width - reserved_width)
         return self._render_progress_bar(position_ms, duration_ms, width=available_width)
 
     def _build_chapter_progress_bar(
@@ -722,6 +778,55 @@ class AudiobookVizApp(App[None]):
     def _format_minutes_seconds(self, value_ms: int) -> str:
         total_seconds = max(0, value_ms // 1000)
         minutes, seconds = divmod(total_seconds, 60)
+        return f"{minutes:02d}:{seconds:02d}"
+
+    def _update_sleep_timer(self, now: float) -> None:
+        if self.sleep_timer_remaining_ms is None:
+            self._sleep_timer_last_tick_at = None
+            return
+        if self._backend_loading or self._backend_error_message is not None or self.playback_state.paused:
+            self._sleep_timer_last_tick_at = now
+            return
+        if self._sleep_timer_last_tick_at is None:
+            self._sleep_timer_last_tick_at = now
+            return
+        elapsed_ms = max(0, int((now - self._sleep_timer_last_tick_at) * 1000))
+        self._sleep_timer_last_tick_at = now
+        if elapsed_ms <= 0:
+            return
+        remaining_ms = self.sleep_timer_remaining_ms - elapsed_ms
+        if remaining_ms > 0:
+            self.sleep_timer_remaining_ms = remaining_ms
+            return
+        self.sleep_timer_remaining_ms = None
+        self._sleep_timer_last_tick_at = None
+        try:
+            self.playback_backend.set_pause(True)
+            self.playback_state = PlaybackState(
+                position_ms=self.playback_state.position_ms,
+                duration_ms=self.playback_state.duration_ms,
+                paused=True,
+                chapter_index=self.playback_state.chapter_index,
+            )
+        except PlaybackError as exc:
+            self._backend_error_message = str(exc)
+
+    def _sleep_timer_progress_label(self) -> str | None:
+        if self.sleep_timer_remaining_ms is None:
+            return None
+        return f"Sleep {self._format_sleep_timer_duration(self.sleep_timer_remaining_ms)}"
+
+    def _sleep_timer_current_state_label(self) -> str:
+        if self.sleep_timer_remaining_ms is None:
+            return "Off"
+        return self._format_sleep_timer_duration(self.sleep_timer_remaining_ms)
+
+    def _format_sleep_timer_duration(self, value_ms: int) -> str:
+        total_seconds = max(0, (value_ms + 999) // 1000)
+        hours, remainder = divmod(total_seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        if hours > 0:
+            return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
         return f"{minutes:02d}:{seconds:02d}"
 
 
@@ -835,6 +940,9 @@ def _help_modal_renderable(accent_color: str) -> Group:
         _section_title("Subtitle Controls"),
         _help_line([("m", "toggle mode"), ("+/-", "scale"), ("[ ]", "offset")], accent_color=accent_color),
         Text(""),
+        _section_title("Sleep Timer"),
+        _help_line([("t", "open sleep timer")], accent_color=accent_color),
+        Text(""),
         _section_title("Window Mode"),
         _help_line(
             [("a/z", "context before +/-"), ("s/x", "context after +/-")],
@@ -850,6 +958,83 @@ def _help_modal_renderable(accent_color: str) -> Group:
     )
 
 
+def _sleep_timer_modal_renderable(*, accent_color: str, current_label: str, selected_label: str) -> Group:
+    return Group(
+        _section_title("Current"),
+        Text(f"  {current_label}", style="#d6e0e8"),
+        Text(""),
+        _section_title("Selected"),
+        Text(
+            f"  {selected_label}",
+            style=(f"bold {accent_color}" if selected_label != "Off" else "#d6e0e8"),
+        ),
+        Text(""),
+        _section_title("Controls"),
+        _help_line([("up/down", "+/- 15 min"), ("space", "start"), ("esc", "close")], accent_color=accent_color),
+        Text(""),
+        Text("  Use down to zero to cancel the active timer.", style="#93a7b7"),
+    )
+
+
+class SleepTimerModal(ModalScreen[None]):
+    BINDINGS = [
+        Binding("up", "increase_sleep_timer", "Increase", show=False),
+        Binding("down", "decrease_sleep_timer", "Decrease", show=False),
+        Binding("space", "apply_sleep_timer", "Start", show=False),
+        Binding("t", "close_sleep_timer", "Close", show=False),
+        Binding("escape", "close_sleep_timer", "Close", show=False),
+    ]
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.selected_duration_ms = 0
+        self._refresh_handle = None
+
+    def compose(self) -> ComposeResult:
+        with Container(id="sleep-timer-modal"):
+            yield Static("Sleep Timer", id="sleep-timer-title")
+            yield Static(id="sleep-timer-content")
+
+    def on_mount(self) -> None:
+        self.selected_duration_ms = self._app().sleep_timer_remaining_ms or 0
+        self._refresh_content()
+        self._refresh_handle = self.set_interval(0.25, self._refresh_content)
+
+    def action_increase_sleep_timer(self) -> None:
+        self.selected_duration_ms += 15 * 60 * 1000
+        self._refresh_content()
+
+    def action_decrease_sleep_timer(self) -> None:
+        self.selected_duration_ms = max(0, self.selected_duration_ms - (15 * 60 * 1000))
+        if self.selected_duration_ms == 0:
+            self._app().cancel_sleep_timer()
+        self._refresh_content()
+
+    def action_apply_sleep_timer(self) -> None:
+        if self.selected_duration_ms > 0:
+            self._app().set_sleep_timer_duration_ms(self.selected_duration_ms)
+        self.dismiss()
+
+    def action_close_sleep_timer(self) -> None:
+        self.dismiss()
+
+    def _app(self) -> AudiobookVizApp:
+        return self.app  # type: ignore[return-value]
+
+    def _refresh_content(self) -> None:
+        self.query_one("#sleep-timer-content", Static).update(
+            _sleep_timer_modal_renderable(
+                accent_color=self._app().help_accent_color,
+                current_label=self._app()._sleep_timer_current_state_label(),
+                selected_label=(
+                    "Off"
+                    if self.selected_duration_ms <= 0
+                    else self._app()._format_sleep_timer_duration(self.selected_duration_ms)
+                ),
+            )
+        )
+
+
 def _section_title(title: str) -> Text:
     return Text(title, style="bold #8dc6ff")
 
@@ -859,7 +1044,7 @@ def _help_line(items: list[tuple[str, str]], *, accent_color: str) -> Text:
     line.append("  ")
     for index, (key, description) in enumerate(items):
         if index > 0:
-            line.append("   ", style="#5c6c7b")
+            line.append("  ", style="#5c6c7b")
         line.append(key, style=f"bold {accent_color}")
         line.append(f" {description}", style="#d6e0e8")
     return line
