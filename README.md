@@ -6,6 +6,7 @@ The current build is focused on long-form audiobook playback:
 - embedded chapter metadata via `ffprobe`
 - audio playback via `mpv` JSON IPC
 - resume state persistence per media file
+- volatile sleep timer with playback-aware countdown
 - subtitle offset adjustment
 - switchable subtitle rendering modes:
   - `window` mode with configurable cue counts before and after the active cue
@@ -21,6 +22,7 @@ Implemented today:
 - single audiobook + single subtitle file per launch
 - chapter navigation and chapter drawer
 - playback controls, relative seeks, and subtitle offset
+- sleep timer with modal controls and auto-pause on expiry
 - subtitle rendering modes for both cue-window and book-style reading
 - chapter-local and whole-book progress display
 - persisted resume state for playback position, chapter, subtitle settings, subtitle mode, book density, and accent color
@@ -106,6 +108,7 @@ Playback and navigation:
 - `space`: play / pause
 - `left` / `right`: seek `-10s` / `+10s`
 - `up` / `down`: previous / next chapter when the drawer is hidden
+- `t`: open the sleep timer modal
 - `c`: toggle chapter drawer
 - `enter`: jump to the selected chapter when the drawer is open
 - `q`: quit
@@ -127,9 +130,16 @@ Help customization:
 - while the keyboard help modal is open, press `e` to edit the accent color
 - enter `#RRGGBB` or `RRGGBB`; the app normalizes it, applies it to help UI accents and the active subtitle cue, and restores it on resume
 
+Sleep timer:
+- press `t` to open the sleep timer modal
+- `up` / `down` adjust the selected duration in `15min` increments
+- `space` starts or resets the selected timer; counting only happens while audio is playing
+- decrease the selected timer to `0` to cancel the active timer
+- sleep timer state is not restored on resume
+
 Progress display:
 - top row: chapter-relative progress with chapter-local position / duration and an adaptive progress bar
-- bottom row: whole-book playback status, global progress bar, subtitle scale, offset, and mode-specific subtitle info
+- bottom row: whole-book playback status, global progress bar, optional sleep-timer status, subtitle scale, offset, and mode-specific subtitle info
 
 ## Development
 
