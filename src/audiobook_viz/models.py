@@ -56,12 +56,10 @@ class ResumeState:
     subtitle_display_mode: SubtitleDisplayMode
     book_page_density: float
     help_accent_color: str
-    subtitle_path: str
 
     def to_dict(self) -> dict[str, object]:
         d = asdict(self)
-        mode = self.subtitle_display_mode
-        d["subtitle_display_mode"] = mode if isinstance(mode, str) else mode.value
+        d["subtitle_display_mode"] = self.subtitle_display_mode.value
         return d
 
     @classmethod
@@ -81,5 +79,4 @@ class ResumeState:
             subtitle_display_mode=_coerce_subtitle_display_mode(str(data.get("subtitle_display_mode", "window"))),
             book_page_density=float(data.get("book_page_density", 1.0)),
             help_accent_color=help_accent_color,
-            subtitle_path=str(data["subtitle_path"]),
         )

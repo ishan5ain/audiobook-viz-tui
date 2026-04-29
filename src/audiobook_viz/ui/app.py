@@ -249,11 +249,6 @@ class AudiobookVizApp(App[None]):
         self.subtitle_offset_ms = initial_subtitle_offset_ms
         self.subtitle_context_before = max(MIN_CONTEXT, initial_subtitle_context_before)
         self.subtitle_context_after = max(MIN_CONTEXT, initial_subtitle_context_after)
-        if isinstance(initial_subtitle_display_mode, str):
-            try:
-                initial_subtitle_display_mode = SubtitleDisplayMode(initial_subtitle_display_mode)
-            except ValueError:
-                initial_subtitle_display_mode = SubtitleDisplayMode.WINDOW
         self.subtitle_display_mode: SubtitleDisplayMode = initial_subtitle_display_mode
         self.book_page_density = min(DENSITY_MAX, max(DENSITY_MIN, round(initial_book_page_density, 1)))
         try:
@@ -331,36 +326,16 @@ class AudiobookVizApp(App[None]):
         self._poll_backend()
 
     def action_increase_context_before(self) -> None:
-        if self.subtitle_display_mode == SubtitleDisplayMode.BOOK:
-            self._adjust_book_page_density(0.1)
-            return
-        self.subtitle_context_before = min(MAX_CONTEXT, self.subtitle_context_before + 1)
-        self._refresh_subtitle()
-        self._refresh_progress()
+        self._dispatch_context_action("subtitle_context_before", 1)
 
     def action_decrease_context_before(self) -> None:
-        if self.subtitle_display_mode == SubtitleDisplayMode.BOOK:
-            self._adjust_book_page_density(-0.1)
-            return
-        self.subtitle_context_before = max(MIN_CONTEXT, self.subtitle_context_before - 1)
-        self._refresh_subtitle()
-        self._refresh_progress()
+        self._dispatch_context_action("subtitle_context_before", -1)
 
     def action_increase_context_after(self) -> None:
-        if self.subtitle_display_mode == SubtitleDisplayMode.BOOK:
-            self._adjust_book_page_density(0.1)
-            return
-        self.subtitle_context_after = min(MAX_CONTEXT, self.subtitle_context_after + 1)
-        self._refresh_subtitle()
-        self._refresh_progress()
+        self._dispatch_context_action("subtitle_context_after", 1)
 
     def action_decrease_context_after(self) -> None:
-        if self.subtitle_display_mode == SubtitleDisplayMode.BOOK:
-            self._adjust_book_page_density(-0.1)
-            return
-        self.subtitle_context_after = max(MIN_CONTEXT, self.subtitle_context_after - 1)
-        self._refresh_subtitle()
-        self._refresh_progress()
+        self._dispatch_context_action("subtitle_context_after", -1)
 
     def action_increase_font_scale(self) -> None:
         self.font_scale = min(MAX_FONT_SCALE, round(self.font_scale + 0.2, 2))
@@ -482,10 +457,9 @@ class AudiobookVizApp(App[None]):
                     subtitle_offset_ms=self.subtitle_offset_ms,
                     subtitle_context_before=self.subtitle_context_before,
                     subtitle_context_after=self.subtitle_context_after,
-                    subtitle_display_mode=self.subtitle_display_mode.value,
+                    subtitle_display_mode=self.subtitle_display_mode,
                     book_page_density=self.book_page_density,
                     help_accent_color=self.help_accent_color,
-                    subtitle_path=str(self.subtitle_path),
                 ),
             )
         self.playback_backend.close()
@@ -665,7 +639,8 @@ class AudiobookVizApp(App[None]):
         base_width = max(24, subtitle_widget.size.width - 8)
         density_width = min(1.0, self.book_page_density)
         wrap_width = max(18, int((base_width * density_width) / self.font_scale))
-        line_budget = max(MIN_LINE_BUDGET, int((max(MIN_SUBTITLE_PANEL_HEIGHT, subtitle_widget.size.height - 4)) / self.font_scale))
+        panel_height = max(MIN_SUBTITLE_PANEL_HEIGHT, subtitle_widget.size.height - 4)
+        line_budget = max(MIN_LINE_BUDGET, int(panel_height / self.font_scale))
         return wrap_width, line_budget
 
     def _adjust_book_page_density(self, delta: float) -> None:
@@ -673,15 +648,14 @@ class AudiobookVizApp(App[None]):
         self._refresh_subtitle()
         self._refresh_progress()
 
-    def _help_bar_text(self) -> str:
-        play_label = "Play" if self.playback_state.paused else "Pause"
-        items: list[str] = []
-        for key, label in _HELP_BAR_ITEMS:
-            if label == "Play":
-                items.append(f"{key} {play_label}")
-            else:
-                items.append(f"{key} {label}")
-        return "  |  ".join(items)
+    def _dispatch_context_action(self, attr: str, delta: int) -> None:
+        if self.subtitle_display_mode == SubtitleDisplayMode.BOOK:
+            self._adjust_book_page_density(0.1 * delta)
+            return
+        current = getattr(self, attr)
+        setattr(self, attr, min(MAX_CONTEXT, max(MIN_CONTEXT, current + delta)))
+        self._refresh_subtitle()
+        self._refresh_progress()
 
     def _help_bar_renderable(self) -> Text:
         play_label = "Play" if self.playback_state.paused else "Pause"
@@ -737,9 +711,6 @@ class AudiobookVizApp(App[None]):
             time_label=time_label,
         )
         return f"{time_label}  {chapter_bar}"
-
-    def _build_progress_bar(self, position_ms: int, duration_ms: int) -> str:
-        return self._render_progress_bar(position_ms, duration_ms, width=24)
 
     def _build_overall_progress_bar(
         self,
