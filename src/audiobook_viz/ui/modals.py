@@ -1,10 +1,21 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container
+from textual.reactive import Reactive
 from textual.screen import ModalScreen
 from textual.widgets import Input, Static
+
+from audiobook_viz.colors import normalize_help_accent_color
+from audiobook_viz.ui.constants import POLL_INTERVAL, SLEEP_TIMER_STEP_MS
+from audiobook_viz.ui.rendering import _help_modal_renderable, _sleep_timer_modal_renderable
+
+if TYPE_CHECKING:
+    from audiobook_viz.ui.app import AudiobookVizApp
+    from rich.console import Group
 
 from audiobook_viz.colors import normalize_help_accent_color
 from audiobook_viz.ui.constants import POLL_INTERVAL, SLEEP_TIMER_STEP_MS
@@ -40,10 +51,10 @@ class HelpModal(ModalScreen[None]):
         self._app().set_help_accent_color(value)
         self._refresh_content()
 
-    def _app(self):
+    def _app(self) -> "AudiobookVizApp":
         return self.app  # type: ignore[return-value]
 
-    def _help_content_renderable(self):
+    def _help_content_renderable(self) -> "Group":
         return _help_modal_renderable(self._app().help_accent_color)
 
     def _refresh_content(self) -> None:
@@ -102,7 +113,7 @@ class SleepTimerModal(ModalScreen[None]):
     def __init__(self) -> None:
         super().__init__()
         self.selected_duration_ms = 0
-        self._refresh_handle = None
+        self._refresh_handle: Reactive | None = None
 
     def compose(self) -> ComposeResult:
         with Container(id="sleep-timer-modal"):
@@ -132,7 +143,7 @@ class SleepTimerModal(ModalScreen[None]):
     def action_close_sleep_timer(self) -> None:
         self.dismiss()
 
-    def _app(self):
+    def _app(self) -> "AudiobookVizApp":
         return self.app  # type: ignore[return-value]
 
     def _refresh_content(self) -> None:
