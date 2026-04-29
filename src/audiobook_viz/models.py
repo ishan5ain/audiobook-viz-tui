@@ -36,6 +36,15 @@ class PlaybackState:
     chapter_index: int
 
 
+def _coerce_subtitle_display_mode(value: str) -> "SubtitleDisplayMode":
+    from audiobook_viz.ui.enums import SubtitleDisplayMode
+
+    try:
+        return SubtitleDisplayMode(str(value))
+    except ValueError:
+        return SubtitleDisplayMode.WINDOW
+
+
 @dataclass(slots=True, frozen=True)
 class ResumeState:
     position_ms: int
@@ -44,13 +53,16 @@ class ResumeState:
     subtitle_offset_ms: int
     subtitle_context_before: int
     subtitle_context_after: int
-    subtitle_display_mode: str
+    subtitle_display_mode: SubtitleDisplayMode
     book_page_density: float
     help_accent_color: str
     subtitle_path: str
 
     def to_dict(self) -> dict[str, object]:
-        return asdict(self)
+        d = asdict(self)
+        mode = self.subtitle_display_mode
+        d["subtitle_display_mode"] = mode if isinstance(mode, str) else mode.value
+        return d
 
     @classmethod
     def from_dict(cls, data: dict[str, object]) -> "ResumeState":
@@ -66,7 +78,7 @@ class ResumeState:
             subtitle_offset_ms=int(data["subtitle_offset_ms"]),
             subtitle_context_before=max(0, int(data.get("subtitle_context_before", 3))),
             subtitle_context_after=max(0, int(data.get("subtitle_context_after", 3))),
-            subtitle_display_mode=str(data.get("subtitle_display_mode", "window")),
+            subtitle_display_mode=_coerce_subtitle_display_mode(str(data.get("subtitle_display_mode", "window"))),
             book_page_density=float(data.get("book_page_density", 1.0)),
             help_accent_color=help_accent_color,
             subtitle_path=str(data["subtitle_path"]),

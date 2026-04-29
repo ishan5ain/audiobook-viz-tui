@@ -11,6 +11,7 @@ from audiobook_viz.playback import PlaybackError
 from audiobook_viz.state import StateStore
 from audiobook_viz.subtitles import SubtitleTimeline
 from audiobook_viz.ui import AudiobookVizApp, HelpModal, SleepTimerModal
+from audiobook_viz.ui.enums import SubtitleDisplayMode
 
 
 class FakeBackend:
@@ -461,7 +462,7 @@ async def _run_book_mode_ui_test(tmp_path: Path) -> None:
         progress_lines = str(progress.renderable).splitlines()
         assert "Mode book" in progress_lines[3]
         assert "Book density x1.0" in progress_lines[3]
-        assert app.subtitle_display_mode == "book"
+        assert app.subtitle_display_mode == SubtitleDisplayMode.BOOK
         assert "Hello world again" in _renderable_plain_text(subtitle_panel.renderable)
         assert "bold #ffbd14 on #21414f" in _renderable_styles(subtitle_panel.renderable)
 
@@ -479,7 +480,7 @@ async def _run_book_mode_ui_test(tmp_path: Path) -> None:
         progress_lines = str(progress.renderable).splitlines()
         assert "Mode window" in progress_lines[3]
         assert "Ctx 4/3" in progress_lines[3]
-        assert app.subtitle_display_mode == "window"
+        assert app.subtitle_display_mode == SubtitleDisplayMode.WINDOW
 
         await pilot.press("h")
         await pilot.pause()
@@ -536,7 +537,7 @@ async def _run_book_mode_paging_regression_test(tmp_path: Path) -> None:
         state_store=StateStore(tmp_path / "state"),
         resume_enabled=True,
         initial_font_scale=3.0,
-        initial_subtitle_display_mode="book",
+        initial_subtitle_display_mode=SubtitleDisplayMode.BOOK,
     )
 
     async with app.run_test() as pilot:
