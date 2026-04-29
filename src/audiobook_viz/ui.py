@@ -20,6 +20,44 @@ from audiobook_viz.playback import PlaybackBackend, PlaybackError
 from audiobook_viz.state import StateStore
 from audiobook_viz.subtitles import SubtitleBookPage, SubtitleBookLine, SubtitleTimeline
 
+# --- Constants ---
+
+POLL_INTERVAL = 0.25
+SEEK_SECONDS = 10
+SUBTITLE_OFFSET_STEP_MS = 250
+SLEEP_TIMER_STEP_MS = 15 * 60 * 1000
+
+DENSITY_MIN = 0.7
+DENSITY_MAX = 1.3
+
+CHAPTER_CLOCK_THRESHOLD_MS = 3_600_000
+
+MAX_CONTEXT = 12
+MIN_CONTEXT = 0
+
+MAX_FONT_SCALE = 3.0
+MIN_FONT_SCALE = 1.0
+
+MIN_BAR_WIDTH = 8
+MIN_PROGRESS_BAR_WIDTH = 10
+MIN_WRAP_WIDTH = 30
+MIN_FONT_SCALED_WIDTH = 18
+MIN_LINE_BUDGET = 4
+MIN_SUBTITLE_PANEL_HEIGHT = 6
+MIN_LINE_BUDGET_BOOK = 3
+MIN_WRAP_WIDTH_BOOK = 18
+
+_HELP_BAR_ITEMS: list[tuple[str, str]] = [
+    ("Space", "Play"),
+    ("←/→", "Seek"),
+    ("↑/↓", "Chapter"),
+    ("c", "Chaps"),
+    ("m", "Mode"),
+    ("t", "Sleep"),
+    ("?", "Help"),
+    ("q", "Quit"),
+]
+
 
 class AudiobookVizApp(App[None]):
     CSS = """
@@ -223,12 +261,12 @@ class AudiobookVizApp(App[None]):
         self.state_store = state_store
         self.resume_enabled = resume_enabled
         self.time_source = time_source
-        self.font_scale = max(1.0, initial_font_scale)
+        self.font_scale = max(MIN_FONT_SCALE, initial_font_scale)
         self.subtitle_offset_ms = initial_subtitle_offset_ms
-        self.subtitle_context_before = max(0, initial_subtitle_context_before)
-        self.subtitle_context_after = max(0, initial_subtitle_context_after)
+        self.subtitle_context_before = max(MIN_CONTEXT, initial_subtitle_context_before)
+        self.subtitle_context_after = max(MIN_CONTEXT, initial_subtitle_context_after)
         self.subtitle_display_mode = self._coerce_subtitle_display_mode(initial_subtitle_display_mode)
-        self.book_page_density = min(1.3, max(0.7, round(initial_book_page_density, 1)))
+        self.book_page_density = min(DENSITY_MAX, max(DENSITY_MIN, round(initial_book_page_density, 1)))
         try:
             self.help_accent_color = normalize_help_accent_color(initial_help_accent_color)
         except ValueError:
@@ -271,18 +309,18 @@ class AudiobookVizApp(App[None]):
             chapter_list.index = 0
         self._refresh_ui()
         self._poll_backend()
-        self._poll_handle = self.set_interval(0.25, self._poll_backend)
+        self._poll_handle = self.set_interval(POLL_INTERVAL, self._poll_backend)
 
     def action_toggle_playback(self) -> None:
         self.playback_backend.play_pause()
         self._poll_backend()
 
     def action_seek_backward(self) -> None:
-        self.playback_backend.seek_relative(-10)
+        self.playback_backend.seek_relative(-SEEK_SECONDS)
         self._poll_backend()
 
     def action_seek_forward(self) -> None:
-        self.playback_backend.seek_relative(10)
+        self.playback_backend.seek_relative(SEEK_SECONDS)
         self._poll_backend()
 
     def action_previous_chapter(self) -> None:
@@ -307,7 +345,7 @@ class AudiobookVizApp(App[None]):
         if self.subtitle_display_mode == "book":
             self._adjust_book_page_density(0.1)
             return
-        self.subtitle_context_before = min(12, self.subtitle_context_before + 1)
+        self.subtitle_context_before = min(MAX_CONTEXT, self.subtitle_context_before + 1)
         self._refresh_subtitle()
         self._refresh_progress()
 
@@ -315,7 +353,7 @@ class AudiobookVizApp(App[None]):
         if self.subtitle_display_mode == "book":
             self._adjust_book_page_density(-0.1)
             return
-        self.subtitle_context_before = max(0, self.subtitle_context_before - 1)
+        self.subtitle_context_before = max(MIN_CONTEXT, self.subtitle_context_before - 1)
         self._refresh_subtitle()
         self._refresh_progress()
 
@@ -323,7 +361,7 @@ class AudiobookVizApp(App[None]):
         if self.subtitle_display_mode == "book":
             self._adjust_book_page_density(0.1)
             return
-        self.subtitle_context_after = min(12, self.subtitle_context_after + 1)
+        self.subtitle_context_after = min(MAX_CONTEXT, self.subtitle_context_after + 1)
         self._refresh_subtitle()
         self._refresh_progress()
 
@@ -331,27 +369,27 @@ class AudiobookVizApp(App[None]):
         if self.subtitle_display_mode == "book":
             self._adjust_book_page_density(-0.1)
             return
-        self.subtitle_context_after = max(0, self.subtitle_context_after - 1)
+        self.subtitle_context_after = max(MIN_CONTEXT, self.subtitle_context_after - 1)
         self._refresh_subtitle()
         self._refresh_progress()
 
     def action_increase_font_scale(self) -> None:
-        self.font_scale = min(3.0, round(self.font_scale + 0.2, 2))
+        self.font_scale = min(MAX_FONT_SCALE, round(self.font_scale + 0.2, 2))
         self._refresh_subtitle()
         self._refresh_progress()
 
     def action_decrease_font_scale(self) -> None:
-        self.font_scale = max(1.0, round(self.font_scale - 0.2, 2))
+        self.font_scale = max(MIN_FONT_SCALE, round(self.font_scale - 0.2, 2))
         self._refresh_subtitle()
         self._refresh_progress()
 
     def action_subtitle_offset_down(self) -> None:
-        self.subtitle_offset_ms -= 250
+        self.subtitle_offset_ms -= SUBTITLE_OFFSET_STEP_MS
         self._refresh_subtitle()
         self._refresh_progress()
 
     def action_subtitle_offset_up(self) -> None:
-        self.subtitle_offset_ms += 250
+        self.subtitle_offset_ms += SUBTITLE_OFFSET_STEP_MS
         self._refresh_subtitle()
         self._refresh_progress()
 
@@ -583,8 +621,8 @@ class AudiobookVizApp(App[None]):
         return Group(*styled_blocks)
 
     def _format_cue_text(self, text: str, *, is_active: bool) -> Text:
-        available_width = max(30, self.size.width - 10)
-        scaled_width = max(18, int(available_width / self.font_scale))
+        available_width = max(MIN_WRAP_WIDTH, self.size.width - 10)
+        scaled_width = max(MIN_FONT_SCALED_WIDTH, int(available_width / self.font_scale))
         wrapped_lines: list[str] = []
         for line in text.splitlines() or [""]:
             wrapped_lines.extend(textwrap.wrap(line, width=scaled_width) or [""])
@@ -635,11 +673,11 @@ class AudiobookVizApp(App[None]):
         base_width = max(24, subtitle_widget.size.width - 8)
         density_width = min(1.0, self.book_page_density)
         wrap_width = max(18, int((base_width * density_width) / self.font_scale))
-        line_budget = max(4, int((max(6, subtitle_widget.size.height - 4)) / self.font_scale))
+        line_budget = max(MIN_LINE_BUDGET, int((max(MIN_SUBTITLE_PANEL_HEIGHT, subtitle_widget.size.height - 4)) / self.font_scale))
         return wrap_width, line_budget
 
     def _adjust_book_page_density(self, delta: float) -> None:
-        self.book_page_density = min(1.3, max(0.7, round(self.book_page_density + delta, 1)))
+        self.book_page_density = min(DENSITY_MAX, max(DENSITY_MIN, round(self.book_page_density + delta, 1)))
         self._refresh_subtitle()
         self._refresh_progress()
 
@@ -648,26 +686,23 @@ class AudiobookVizApp(App[None]):
 
     def _help_bar_text(self) -> str:
         play_label = "Play" if self.playback_state.paused else "Pause"
-        return (
-            f"Space {play_label}  |  ←/→ Seek  |  ↑/↓ Chapter  |  "
-            "c Chaps  |  m Mode  |  t Sleep  |  ? Help  |  q Quit"
-        )
+        items: list[str] = []
+        for key, label in _HELP_BAR_ITEMS:
+            if label == "Play":
+                items.append(f"{key} {play_label}")
+            else:
+                items.append(f"{key} {label}")
+        return "  |  ".join(items)
 
     def _help_bar_renderable(self) -> Text:
         play_label = "Play" if self.playback_state.paused else "Pause"
-        return _build_key_value_row(
-            [
-                ("Space", play_label),
-                ("←/→", "Seek"),
-                ("↑/↓", "Chapter"),
-                ("c", "Chaps"),
-                ("m", "Mode"),
-                ("t", "Sleep"),
-                ("?", "Help"),
-                ("q", "Quit"),
-            ],
-            accent_color=self.help_accent_color,
-        )
+        items: list[tuple[str, str]] = []
+        for key, label in _HELP_BAR_ITEMS:
+            if label == "Play":
+                items.append((key, play_label))
+            else:
+                items.append((key, label))
+        return _build_key_value_row(items, accent_color=self.help_accent_color)
 
     def _apply_drawer_selection(self) -> None:
         if self._chapter_selection_index is None:
@@ -732,7 +767,7 @@ class AudiobookVizApp(App[None]):
         reserved_width = len(status_prefix) + len(time_label) + 10
         if extra_label is not None:
             reserved_width += len(extra_label) + 2
-        available_width = max(10, row_width - reserved_width)
+        available_width = max(MIN_PROGRESS_BAR_WIDTH, row_width - reserved_width)
         return self._render_progress_bar(position_ms, duration_ms, width=available_width)
 
     def _build_chapter_progress_bar(
@@ -749,7 +784,7 @@ class AudiobookVizApp(App[None]):
         return self._render_progress_bar(position_ms, duration_ms, width=available_width)
 
     def _render_progress_bar(self, position_ms: int, duration_ms: int, *, width: int) -> str:
-        width = max(8, width)
+        width = max(MIN_BAR_WIDTH, width)
         if duration_ms <= 0:
             return "░" * width
         ratio = min(1.0, max(0.0, position_ms / duration_ms))
@@ -763,7 +798,7 @@ class AudiobookVizApp(App[None]):
         return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
     def _format_chapter_progress_clock(self, position_ms: int, duration_ms: int) -> str:
-        if position_ms < 3_600_000 and duration_ms < 3_600_000:
+        if position_ms < CHAPTER_CLOCK_THRESHOLD_MS and duration_ms < CHAPTER_CLOCK_THRESHOLD_MS:
             return (
                 f"{self._format_minutes_seconds(position_ms)} / "
                 f"{self._format_minutes_seconds(duration_ms)}"
@@ -993,14 +1028,14 @@ class SleepTimerModal(ModalScreen[None]):
     def on_mount(self) -> None:
         self.selected_duration_ms = self._app().sleep_timer_remaining_ms or 0
         self._refresh_content()
-        self._refresh_handle = self.set_interval(0.25, self._refresh_content)
+        self._refresh_handle = self.set_interval(POLL_INTERVAL, self._refresh_content)
 
     def action_increase_sleep_timer(self) -> None:
-        self.selected_duration_ms += 15 * 60 * 1000
+        self.selected_duration_ms += SLEEP_TIMER_STEP_MS
         self._refresh_content()
 
     def action_decrease_sleep_timer(self) -> None:
-        self.selected_duration_ms = max(0, self.selected_duration_ms - (15 * 60 * 1000))
+        self.selected_duration_ms = max(0, self.selected_duration_ms - SLEEP_TIMER_STEP_MS)
         if self.selected_duration_ms == 0:
             self._app().cancel_sleep_timer()
         self._refresh_content()
