@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from enum import Enum, auto
+from enum import Enum
 
 
-class SubtitleDisplayMode(Enum):
-    WINDOW = auto()
-    BOOK = auto()
+class SubtitleDisplayMode(str, Enum):
+    WINDOW = "window"
+    BOOK = "book"
