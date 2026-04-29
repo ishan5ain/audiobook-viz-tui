@@ -43,9 +43,6 @@ class AudiobookVizApp(App[None]):
         height: 5;
         content-align: center middle;
         text-align: center;
-        # background: #1b2430;
-        # background: black;
-        # border: round #3a4a5e;
         margin-bottom: 0;
     }
 
@@ -62,8 +59,6 @@ class AudiobookVizApp(App[None]):
         height: 6;
         content-align: center middle;
         text-align: center;
-        # background: #1b2430;
-        # border: round #3a4a5e;
         margin-top: 0;
     }
 
