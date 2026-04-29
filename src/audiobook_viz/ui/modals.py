@@ -17,10 +17,6 @@ if TYPE_CHECKING:
     from audiobook_viz.ui.app import AudiobookVizApp
     from rich.console import Group
 
-from audiobook_viz.colors import normalize_help_accent_color
-from audiobook_viz.ui.constants import POLL_INTERVAL, SLEEP_TIMER_STEP_MS
-from audiobook_viz.ui.rendering import _help_modal_renderable, _sleep_timer_modal_renderable
-
 
 class HelpModal(ModalScreen[None]):
     BINDINGS = [
