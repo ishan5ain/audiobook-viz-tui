@@ -11,6 +11,7 @@ from audiobook_viz.playback import MpvBackend, PlaybackError, ensure_mpv_availab
 from audiobook_viz.state import StateStore
 from audiobook_viz.subtitles import SubtitleParseError, SubtitleTimeline, parse_subtitle_file
 from audiobook_viz.ui import AudiobookVizApp
+from audiobook_viz.ui.enums import SubtitleDisplayMode
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -44,7 +45,7 @@ class StartupConfig:
     font_scale: float
     subtitle_context_before: int
     subtitle_context_after: int
-    subtitle_display_mode: str
+    subtitle_display_mode: SubtitleDisplayMode
     book_page_density: float
     help_accent_color: str
     start_position_ms: int | None
@@ -71,7 +72,7 @@ def _resolve_startup_config(
         else (resume_state.subtitle_context_after if resume_state else 3)
     )
     initial_subtitle_display_mode = (
-        resume_state.subtitle_display_mode if resume_state else "window"
+        resume_state.subtitle_display_mode if resume_state else SubtitleDisplayMode.WINDOW
     )
     initial_book_page_density = resume_state.book_page_density if resume_state else 1.0
     initial_help_accent_color = (
