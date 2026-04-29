@@ -12,6 +12,17 @@ _VTT_TIMESTAMP = re.compile(
     r"^(?:(?P<h>\d{2,}):)?(?P<m>\d{2}):(?P<s>\d{2})\.(?P<ms>\d{3})$"
 )
 
+# --- Constants ---
+
+PARAGRAPH_SPLIT_GAP_THRESHOLD_MS = 1500
+PARAGRAPH_SPLIT_CHAR_THRESHOLD = 260
+PARAGRAPH_SPLIT_CHAR_THRESHOLD_LOW = 180
+PARAGRAPH_SPLIT_WORD_THRESHOLD = 32
+PARAGRAPH_SPLIT_GAP_THRESHOLD_LOW_MS = 700
+
+MIN_WRAP_WIDTH = 18
+MIN_LINE_BUDGET = 3
+
 
 class SubtitleParseError(RuntimeError):
     """Raised when subtitle text cannot be parsed."""
@@ -159,8 +170,8 @@ class SubtitleTimeline:
         if not self.cues:
             return None, None
         layout = self._book_layout(
-            wrap_width=max(18, wrap_width),
-            line_budget=max(3, line_budget),
+            wrap_width=max(MIN_WRAP_WIDTH, wrap_width),
+            line_budget=max(MIN_LINE_BUDGET, line_budget),
             page_density=page_density,
         )
         if not layout.pages:
@@ -395,11 +406,11 @@ def _should_split_paragraph(
     current_char_count: int,
     current_word_count: int,
 ) -> bool:
-    if gap_ms >= 1500:
+    if gap_ms >= PARAGRAPH_SPLIT_GAP_THRESHOLD_MS:
         return True
-    if current_char_count >= 260:
+    if current_char_count >= PARAGRAPH_SPLIT_CHAR_THRESHOLD:
         return True
-    return current_char_count >= 180 and current_word_count >= 32 and gap_ms >= 700
+    return current_char_count >= PARAGRAPH_SPLIT_CHAR_THRESHOLD_LOW and current_word_count >= PARAGRAPH_SPLIT_WORD_THRESHOLD and gap_ms >= PARAGRAPH_SPLIT_GAP_THRESHOLD_LOW_MS
 
 
 def _wrap_paragraph_lines(paragraph: SubtitleParagraph, width: int) -> list[SubtitleBookLine]:
@@ -407,7 +418,7 @@ def _wrap_paragraph_lines(paragraph: SubtitleParagraph, width: int) -> list[Subt
     line_fragments: list[BookLineFragment] = []
     line_cue_indices: list[int] = []
     current_line_length = 0
-    width = max(18, width)
+    width = max(MIN_WRAP_WIDTH, width)
 
     def flush_line() -> None:
         nonlocal line_fragments, line_cue_indices, current_line_length
