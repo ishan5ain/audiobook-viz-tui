@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 from pathlib import Path
 
 from audiobook_viz.colors import DEFAULT_HELP_ACCENT_COLOR
+from audiobook_viz.models import ResumeState
 from audiobook_viz.media import MediaProbeError, probe_media_metadata
 from audiobook_viz.playback import MpvBackend, PlaybackError, ensure_mpv_available
 from audiobook_viz.state import StateStore
@@ -36,6 +38,58 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+@dataclass(frozen=True, slots=True)
+class StartupConfig:
+    subtitle_offset_ms: int
+    font_scale: float
+    subtitle_context_before: int
+    subtitle_context_after: int
+    subtitle_display_mode: str
+    book_page_density: float
+    help_accent_color: str
+    start_position_ms: int | None
+
+
+def _resolve_startup_config(
+    args: argparse.Namespace,
+    resume_state: ResumeState | None,
+) -> StartupConfig:
+    initial_offset_ms = (
+        args.subtitle_offset_ms
+        if args.subtitle_offset_ms is not None
+        else (resume_state.subtitle_offset_ms if resume_state else 0)
+    )
+    initial_font_scale = resume_state.font_scale if resume_state else 1.0
+    initial_context_before = (
+        max(0, args.subtitle_context_before)
+        if args.subtitle_context_before is not None
+        else (resume_state.subtitle_context_before if resume_state else 3)
+    )
+    initial_context_after = (
+        max(0, args.subtitle_context_after)
+        if args.subtitle_context_after is not None
+        else (resume_state.subtitle_context_after if resume_state else 3)
+    )
+    initial_subtitle_display_mode = (
+        resume_state.subtitle_display_mode if resume_state else "window"
+    )
+    initial_book_page_density = resume_state.book_page_density if resume_state else 1.0
+    initial_help_accent_color = (
+        resume_state.help_accent_color if resume_state else DEFAULT_HELP_ACCENT_COLOR
+    )
+    start_position_ms = resume_state.position_ms if resume_state else None
+    return StartupConfig(
+        subtitle_offset_ms=initial_offset_ms,
+        font_scale=initial_font_scale,
+        subtitle_context_before=initial_context_before,
+        subtitle_context_after=initial_context_after,
+        subtitle_display_mode=initial_subtitle_display_mode,
+        book_page_density=initial_book_page_density,
+        help_accent_color=initial_help_accent_color,
+        start_position_ms=start_position_ms,
+    )
+
+
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
@@ -48,33 +102,10 @@ def main() -> int:
         timeline = SubtitleTimeline(cues)
         state_store = None if args.no_resume else StateStore(args.state_dir)
         resume_state = None if state_store is None else state_store.load(audio_path)
-        initial_offset_ms = (
-            args.subtitle_offset_ms
-            if args.subtitle_offset_ms is not None
-            else (resume_state.subtitle_offset_ms if resume_state else 0)
-        )
-        initial_font_scale = resume_state.font_scale if resume_state else 1.0
-        initial_context_before = (
-            max(0, args.subtitle_context_before)
-            if args.subtitle_context_before is not None
-            else (resume_state.subtitle_context_before if resume_state else 3)
-        )
-        initial_context_after = (
-            max(0, args.subtitle_context_after)
-            if args.subtitle_context_after is not None
-            else (resume_state.subtitle_context_after if resume_state else 3)
-        )
-        initial_subtitle_display_mode = (
-            resume_state.subtitle_display_mode if resume_state else "window"
-        )
-        initial_book_page_density = resume_state.book_page_density if resume_state else 1.0
-        initial_help_accent_color = (
-            resume_state.help_accent_color if resume_state else DEFAULT_HELP_ACCENT_COLOR
-        )
-        start_position_ms = resume_state.position_ms if resume_state else None
+        startup = _resolve_startup_config(args, resume_state)
         backend = MpvBackend(
             audio_path,
-            start_position_ms=start_position_ms,
+            start_position_ms=startup.start_position_ms,
             initial_duration_ms=metadata.duration_ms,
         )
         app = AudiobookVizApp(
@@ -84,13 +115,13 @@ def main() -> int:
             subtitle_path=subtitle_path,
             state_store=state_store,
             resume_enabled=not args.no_resume,
-            initial_font_scale=initial_font_scale,
-            initial_subtitle_offset_ms=initial_offset_ms,
-            initial_subtitle_context_before=initial_context_before,
-            initial_subtitle_context_after=initial_context_after,
-            initial_subtitle_display_mode=initial_subtitle_display_mode,
-            initial_book_page_density=initial_book_page_density,
-            initial_help_accent_color=initial_help_accent_color,
+            initial_font_scale=startup.font_scale,
+            initial_subtitle_offset_ms=startup.subtitle_offset_ms,
+            initial_subtitle_context_before=startup.subtitle_context_before,
+            initial_subtitle_context_after=startup.subtitle_context_after,
+            initial_subtitle_display_mode=startup.subtitle_display_mode,
+            initial_book_page_density=startup.book_page_density,
+            initial_help_accent_color=startup.help_accent_color,
         )
     except (MediaProbeError, PlaybackError, SubtitleParseError, ValueError) as exc:
         parser.exit(2, f"error: {exc}\n")
