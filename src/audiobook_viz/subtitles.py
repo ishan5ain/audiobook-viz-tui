@@ -410,7 +410,11 @@ def _should_split_paragraph(
         return True
     if current_char_count >= PARAGRAPH_SPLIT_CHAR_THRESHOLD:
         return True
-    return current_char_count >= PARAGRAPH_SPLIT_CHAR_THRESHOLD_LOW and current_word_count >= PARAGRAPH_SPLIT_WORD_THRESHOLD and gap_ms >= PARAGRAPH_SPLIT_GAP_THRESHOLD_LOW_MS
+    return (
+        current_char_count >= PARAGRAPH_SPLIT_CHAR_THRESHOLD_LOW
+        and current_word_count >= PARAGRAPH_SPLIT_WORD_THRESHOLD
+        and gap_ms >= PARAGRAPH_SPLIT_GAP_THRESHOLD_LOW_MS
+    )
 
 
 def _wrap_paragraph_lines(paragraph: SubtitleParagraph, width: int) -> list[SubtitleBookLine]:

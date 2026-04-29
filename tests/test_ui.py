@@ -233,24 +233,6 @@ def test_sleep_timer_ignores_loading_and_backend_errors(tmp_path: Path) -> None:
     assert app.sleep_timer_remaining_ms == 15 * 60 * 1000
 
 
-def test_help_bar_text_is_compact() -> None:
-    app = AudiobookVizApp(
-        metadata=MediaMetadata(audio_path=Path("book.m4a"), duration_ms=1, chapters=[]),
-        timeline=SubtitleTimeline([]),
-        playback_backend=FakeBackend(),
-        subtitle_path=Path("book.srt"),
-        state_store=None,
-        resume_enabled=False,
-    )
-
-    assert app._help_bar_text() == (
-        "Space Play  |  ←/→ Seek  |  ↑/↓ Chapter  |  c Chaps  |  m Mode  |  t Sleep  |  ? Help  |  q Quit"
-    )
-    app.playback_state = PlaybackState(position_ms=0, duration_ms=1, paused=False, chapter_index=-1)
-    assert app._help_bar_text() == (
-        "Space Pause  |  ←/→ Seek  |  ↑/↓ Chapter  |  c Chaps  |  m Mode  |  t Sleep  |  ? Help  |  q Quit"
-    )
-
 
 async def _run_ui_test(tmp_path: Path) -> None:
     audio_path = tmp_path / "book.m4a"

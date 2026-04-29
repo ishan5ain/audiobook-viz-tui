@@ -5,6 +5,7 @@ from pathlib import Path
 
 from audiobook_viz.models import ResumeState
 from audiobook_viz.state import StateStore, media_identity
+from audiobook_viz.ui.enums import SubtitleDisplayMode
 
 
 def test_state_store_round_trip(tmp_path: Path) -> None:
@@ -18,10 +19,9 @@ def test_state_store_round_trip(tmp_path: Path) -> None:
         subtitle_offset_ms=-250,
         subtitle_context_before=4,
         subtitle_context_after=2,
-        subtitle_display_mode="book",
+        subtitle_display_mode=SubtitleDisplayMode.BOOK,
         book_page_density=1.1,
         help_accent_color="#112233",
-        subtitle_path="/tmp/book.srt",
     )
 
     store.save(audio_path, resume_state)
@@ -37,13 +37,12 @@ def test_resume_state_loads_defaults_for_older_state_shape() -> None:
             "chapter_index": 1,
             "font_scale": 1.1,
             "subtitle_offset_ms": 0,
-            "subtitle_path": "/tmp/book.srt",
         }
     )
 
     assert resume_state.subtitle_context_before == 3
     assert resume_state.subtitle_context_after == 3
-    assert resume_state.subtitle_display_mode == "window"
+    assert resume_state.subtitle_display_mode == SubtitleDisplayMode.WINDOW
     assert resume_state.book_page_density == 1.0
     assert resume_state.help_accent_color == "#ffbd14"
 
@@ -56,7 +55,6 @@ def test_resume_state_normalizes_invalid_or_unprefixed_help_accent_color() -> No
             "font_scale": 1.1,
             "subtitle_offset_ms": 0,
             "help_accent_color": "112233",
-            "subtitle_path": "/tmp/book.srt",
         }
     )
     invalid_resume_state = ResumeState.from_dict(
@@ -66,7 +64,6 @@ def test_resume_state_normalizes_invalid_or_unprefixed_help_accent_color() -> No
             "font_scale": 1.1,
             "subtitle_offset_ms": 0,
             "help_accent_color": "oops",
-            "subtitle_path": "/tmp/book.srt",
         }
     )
 
