@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 
 from audiobook_viz.models import SubtitleCue
+from audiobook_viz.subtitle_layout import BookLayoutEngine
 
 _SRT_TIMESTAMP = re.compile(r"^(?P<h>\d{2}):(?P<m>\d{2}):(?P<s>\d{2}),(?P<ms>\d{3})$")
 _VTT_TIMESTAMP = re.compile(
@@ -94,15 +95,12 @@ class SubtitleTimeline:
     _starts: list[int] = field(init=False, repr=False)
     _paragraphs: list[SubtitleParagraph] = field(init=False, repr=False)
     _cue_to_paragraph: list[int] = field(init=False, repr=False)
-    _book_layout_cache: dict[tuple[int, int, int], SubtitleBookLayout] = field(
-        init=False,
-        repr=False,
-    )
+    _layout_engine: BookLayoutEngine = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         self._starts = [cue.start_ms for cue in self.cues]
         self._paragraphs, self._cue_to_paragraph = self._build_paragraphs()
-        self._book_layout_cache = {}
+        self._layout_engine = BookLayoutEngine()
 
     def active_at(self, position_ms: int, subtitle_offset_ms: int = 0) -> SubtitleCue | None:
         active_index = self.active_index_at(position_ms, subtitle_offset_ms)
@@ -169,7 +167,8 @@ class SubtitleTimeline:
     ) -> tuple[SubtitleBookPage | None, int | None]:
         if not self.cues:
             return None, None
-        layout = self._book_layout(
+        layout = self._layout_engine.layout(
+            self._paragraphs,
             wrap_width=max(MIN_WRAP_WIDTH, wrap_width),
             line_budget=max(MIN_LINE_BUDGET, line_budget),
             page_density=page_density,
@@ -259,68 +258,7 @@ class SubtitleTimeline:
         flush()
         return paragraphs, cue_to_paragraph
 
-    def _book_layout(
-        self,
-        *,
-        wrap_width: int,
-        line_budget: int,
-        page_density: float,
-    ) -> SubtitleBookLayout:
-        density_key = int(round(page_density * 10))
-        cache_key = (wrap_width, line_budget, density_key)
-        cached = self._book_layout_cache.get(cache_key)
-        if cached is not None:
-            return cached
 
-        # Pages are built from wrapped visual lines, not from whole paragraphs. This keeps the
-        # active cue visible even when one merged paragraph is taller than the subtitle pane.
-        paragraph_gap = 0 if page_density >= 1.1 else 1
-        pages: list[SubtitleBookPage] = []
-        cue_page_indices = [-1] * len(self.cues)
-        current_page_lines: list[SubtitleBookLine] = []
-
-        def flush_page() -> None:
-            nonlocal current_page_lines
-            if not current_page_lines:
-                return
-            cue_indices = _flatten_cue_indices(current_page_lines)
-            if not cue_indices:
-                current_page_lines = []
-                return
-            page_index = len(pages)
-            for cue_index in cue_indices:
-                if cue_page_indices[cue_index] < 0:
-                    cue_page_indices[cue_index] = page_index
-            pages.append(
-                SubtitleBookPage(
-                    lines=tuple(current_page_lines),
-                    first_cue_index=cue_indices[0],
-                    last_cue_index=cue_indices[-1],
-                )
-            )
-            current_page_lines = []
-
-        for paragraph in self._paragraphs:
-            paragraph_lines = _wrap_paragraph_lines(paragraph, wrap_width)
-            if current_page_lines and paragraph_gap > 0:
-                if len(current_page_lines) + paragraph_gap >= line_budget:
-                    flush_page()
-                else:
-                    for _ in range(paragraph_gap):
-                        current_page_lines.append(SubtitleBookLine(fragments=(), cue_indices=()))
-
-            for line in paragraph_lines:
-                if len(current_page_lines) >= line_budget:
-                    flush_page()
-                current_page_lines.append(line)
-
-        flush_page()
-        layout = SubtitleBookLayout(
-            pages=tuple(pages),
-            cue_page_indices=tuple(cue_page_indices),
-        )
-        self._book_layout_cache[cache_key] = layout
-        return layout
 
 
 def _parse_srt(text: str) -> list[SubtitleCue]:
