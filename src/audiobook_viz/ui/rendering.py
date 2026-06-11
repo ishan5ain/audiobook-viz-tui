@@ -1,7 +1,155 @@
 from __future__ import annotations
 
-from rich.console import Group
+import textwrap
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+from rich.align import Align
+from rich.console import Group, RenderableType
 from rich.text import Text
+from textual.widgets import Static
+
+from audiobook_viz.subtitles import SubtitleBookPage, SubtitleBookLine, SubtitleTimeline
+from audiobook_viz.ui.constants import (
+    DENSITY_MAX,
+    DENSITY_MIN,
+    MAX_CONTEXT,
+    MAX_FONT_SCALE,
+    MIN_BAR_WIDTH,
+    MIN_CONTEXT,
+    MIN_FONT_SCALE,
+    MIN_FONT_SCALED_WIDTH,
+    MIN_LINE_BUDGET,
+    MIN_PROGRESS_BAR_WIDTH,
+    MIN_SUBTITLE_PANEL_HEIGHT,
+    MIN_WRAP_WIDTH,
+)
+from audiobook_viz.ui.enums import SubtitleDisplayMode
+
+
+@dataclass(frozen=True)
+class SubtitleViewState:
+    font_scale: float
+    book_page_density: float
+    help_accent_color: str
+    subtitle_display_mode: SubtitleDisplayMode
+    subtitle_offset_ms: int
+    subtitle_context_before: int
+    subtitle_context_after: int
+    panel_width: int
+    panel_height: int
+
+
+class SubtitleRenderer:
+    def render(
+        self,
+        timeline: SubtitleTimeline,
+        position_ms: int,
+        state: SubtitleViewState,
+    ) -> RenderableType:
+        if state.subtitle_display_mode == SubtitleDisplayMode.BOOK:
+            wrap_width, line_budget = _book_layout_metrics(
+                state.panel_width,
+                state.panel_height,
+                state.book_page_density,
+                state.font_scale,
+            )
+            page, active_index = timeline.book_page_at(
+                position_ms,
+                subtitle_offset_ms=state.subtitle_offset_ms,
+                wrap_width=wrap_width,
+                line_budget=line_budget,
+                page_density=state.book_page_density,
+            )
+            renderable = self._build_book_subtitle_renderable(page, active_index, state.help_accent_color)
+            aligned = Align.left(renderable, vertical="top")
+        else:
+            cues, active_index = timeline.window_at(
+                position_ms,
+                subtitle_offset_ms=state.subtitle_offset_ms,
+                before_count=state.subtitle_context_before,
+                after_count=state.subtitle_context_after,
+            )
+            renderable = self._build_window_subtitle_renderable(
+                cues, active_index, state.font_scale, state.help_accent_color
+            )
+            aligned = Align.center(renderable, vertical="middle")
+        return aligned
+
+    def _build_window_subtitle_renderable(
+        self,
+        cues: list,
+        active_index: int | None,
+        font_scale: float,
+        accent_color: str,
+    ) -> Group | Text:
+        if not cues:
+            return Text("...", justify="center", style="dim")
+
+        styled_blocks: list[Text] = []
+        for index, cue in enumerate(cues):
+            is_active = active_index == index
+            styled_blocks.append(
+                self._format_cue_text(
+                    cue.text,
+                    font_scale=font_scale,
+                    is_active=is_active,
+                    accent_color=accent_color,
+                )
+            )
+        return Group(*styled_blocks)
+
+    def _format_cue_text(self, text: str, *, font_scale: float, is_active: bool, accent_color: str) -> Text:
+        available_width = max(MIN_WRAP_WIDTH, 80 - 10)
+        scaled_width = max(MIN_FONT_SCALED_WIDTH, int(available_width / font_scale))
+        wrapped_lines: list[str] = []
+        for line in text.splitlines() or [""]:
+            wrapped_lines.extend(textwrap.wrap(line, width=scaled_width) or [""])
+        vertical_padding = max(0, int(round((font_scale - 1.0) * 2)))
+        padding = [""] * vertical_padding
+        block_lines = padding + wrapped_lines + padding
+        style = f"bold {accent_color} on #21414f" if is_active else "dim #9cb2c7"
+        return Text("\n".join(block_lines), justify="center", style=style)
+
+    def _build_book_subtitle_renderable(
+        self,
+        page: SubtitleBookPage | None,
+        active_cue_index: int | None,
+        accent_color: str,
+    ) -> Group | Text:
+        if page is None or not page.lines:
+            return Text("...", justify="left", style="dim")
+
+        blocks: list[Text] = []
+        for line in page.lines:
+            blocks.append(self._format_book_line(line, active_cue_index, accent_color))
+        return Group(*blocks)
+
+    def _format_book_line(
+        self,
+        line: SubtitleBookLine,
+        active_cue_index: int | None,
+        accent_color: str,
+    ) -> Text:
+        if not line.fragments:
+            return Text("")
+
+        rendered = Text(justify="left")
+        default_style = "#c7d5e0"
+        active_style = f"bold {accent_color} on #21414f"
+        for fragment in line.fragments:
+            style = active_style if fragment.cue_index == active_cue_index else default_style
+            rendered.append(fragment.text, style=style)
+        return rendered
+
+
+def _book_layout_metrics(panel_width: int, panel_height: int, page_density: float, font_scale: float) -> tuple[int, int]:
+    base_width = max(24, panel_width - 8)
+    density_width = min(1.0, page_density)
+    wrap_width = max(18, int((base_width * density_width) / font_scale))
+    panel_height = max(MIN_SUBTITLE_PANEL_HEIGHT, panel_height - 4)
+    line_budget = max(MIN_LINE_BUDGET, int(panel_height / font_scale))
+    return wrap_width, line_budget
 
 
 def _build_key_value_row(
