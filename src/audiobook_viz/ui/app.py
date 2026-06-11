@@ -38,6 +38,7 @@ from audiobook_viz.ui.constants import (
 from audiobook_viz.ui.enums import SubtitleDisplayMode
 from audiobook_viz.ui.modals import HelpModal, SleepTimerModal
 from audiobook_viz.ui.rendering import SubtitleRenderer, SubtitleViewState, _build_key_value_row
+from audiobook_viz.ui.sleep_timer import SleepTimer
 
 
 class AudiobookVizApp(App[None]):
@@ -266,8 +267,7 @@ class AudiobookVizApp(App[None]):
         self._backend_error_message: str | None = None
         self._chapter_labels: list[Label] = []
         self._subtitle_renderer = SubtitleRenderer()
-        self.sleep_timer_remaining_ms: int | None = None
-        self._sleep_timer_last_tick_at: float | None = None
+        self._sleep_timer = SleepTimer(time_source=time_source)
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -377,17 +377,12 @@ class AudiobookVizApp(App[None]):
             self._refresh_subtitle()
 
     def set_sleep_timer_duration_ms(self, duration_ms: int | None) -> None:
-        if duration_ms is None or duration_ms <= 0:
-            self.sleep_timer_remaining_ms = None
-            self._sleep_timer_last_tick_at = None
-        else:
-            self.sleep_timer_remaining_ms = duration_ms
-            self._sleep_timer_last_tick_at = self.time_source()
+        self._sleep_timer.set_duration(duration_ms)
         if self.is_mounted and self._screen_stack:
             self._refresh_progress()
 
     def cancel_sleep_timer(self) -> None:
-        self.set_sleep_timer_duration_ms(None)
+        self._sleep_timer.set_duration(None)
 
     def action_toggle_chapters(self) -> None:
         if not self.metadata.chapters:
@@ -697,50 +692,26 @@ class AudiobookVizApp(App[None]):
         return f"{minutes:02d}:{seconds:02d}"
 
     def _update_sleep_timer(self, now: float) -> None:
-        if self.sleep_timer_remaining_ms is None:
-            self._sleep_timer_last_tick_at = None
-            return
         if self._backend_loading or self._backend_error_message is not None or self.playback_state.paused:
-            self._sleep_timer_last_tick_at = now
+            self._sleep_timer.tick(now, playing=False)
             return
-        if self._sleep_timer_last_tick_at is None:
-            self._sleep_timer_last_tick_at = now
-            return
-        elapsed_ms = max(0, int((now - self._sleep_timer_last_tick_at) * 1000))
-        self._sleep_timer_last_tick_at = now
-        if elapsed_ms <= 0:
-            return
-        remaining_ms = self.sleep_timer_remaining_ms - elapsed_ms
-        if remaining_ms > 0:
-            self.sleep_timer_remaining_ms = remaining_ms
-            return
-        self.sleep_timer_remaining_ms = None
-        self._sleep_timer_last_tick_at = None
-        try:
-            self.playback_backend.set_pause(True)
-            self.playback_state = PlaybackState(
-                position_ms=self.playback_state.position_ms,
-                duration_ms=self.playback_state.duration_ms,
-                paused=True,
-                chapter_index=self.playback_state.chapter_index,
-            )
-        except PlaybackError as exc:
-            self._backend_error_message = str(exc)
+        self._sleep_timer.tick(now, playing=True)
+        if self._sleep_timer.state == SleepTimer.State.EXPIRED:
+            try:
+                self.playback_backend.set_pause(True)
+                self.playback_state = PlaybackState(
+                    position_ms=self.playback_state.position_ms,
+                    duration_ms=self.playback_state.duration_ms,
+                    paused=True,
+                    chapter_index=self.playback_state.chapter_index,
+                )
+            except PlaybackError as exc:
+                self._backend_error_message = str(exc)
 
     def _sleep_timer_progress_label(self) -> str | None:
-        if self.sleep_timer_remaining_ms is None:
+        if self._sleep_timer.remaining is None:
             return None
-        return f"Sleep {self._format_sleep_timer_duration(self.sleep_timer_remaining_ms)}"
+        return f"Sleep {self._sleep_timer.format_remaining()}"
 
     def _sleep_timer_current_state_label(self) -> str:
-        if self.sleep_timer_remaining_ms is None:
-            return "Off"
-        return self._format_sleep_timer_duration(self.sleep_timer_remaining_ms)
-
-    def _format_sleep_timer_duration(self, value_ms: int) -> str:
-        total_seconds = max(0, (value_ms + 999) // 1000)
-        hours, remainder = divmod(total_seconds, 3600)
-        minutes, seconds = divmod(remainder, 60)
-        if hours > 0:
-            return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-        return f"{minutes:02d}:{seconds:02d}"
+        return self._sleep_timer.format_remaining()

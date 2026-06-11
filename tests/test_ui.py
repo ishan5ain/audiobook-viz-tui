@@ -224,13 +224,13 @@ def test_sleep_timer_ignores_loading_and_backend_errors(tmp_path: Path) -> None:
     app._backend_loading = True
     clock.advance(10)
     app._update_sleep_timer(clock.now())
-    assert app.sleep_timer_remaining_ms == 15 * 60 * 1000
+    assert app._sleep_timer.remaining == 15 * 60 * 1000
 
     app._backend_loading = False
     app._backend_error_message = "property unavailable"
     clock.advance(10)
     app._update_sleep_timer(clock.now())
-    assert app.sleep_timer_remaining_ms == 15 * 60 * 1000
+    assert app._sleep_timer.remaining == 15 * 60 * 1000
 
 
 
@@ -705,7 +705,7 @@ async def _run_sleep_timer_ui_test(tmp_path: Path) -> None:
         await pilot.press("space")
         await pilot.pause()
         assert not isinstance(app.screen_stack[-1], SleepTimerModal)
-        assert app.sleep_timer_remaining_ms == 15 * 60 * 1000
+        assert app._sleep_timer.remaining == 15 * 60 * 1000
         progress_lines = str(app.query_one("#progress", Static).renderable).splitlines()
         assert len(progress_lines) == 4
         assert "Sleep 15:00" in progress_lines[2]
@@ -744,7 +744,7 @@ async def _run_sleep_timer_ui_test(tmp_path: Path) -> None:
         pause_true_calls_before_expiry = backend.actions.count(("set_pause", True))
         app._poll_backend()
         await pilot.pause()
-        assert app.sleep_timer_remaining_ms is None
+        assert app._sleep_timer.remaining is None
         assert backend.actions.count(("set_pause", True)) == pause_true_calls_before_expiry + 1
         assert backend.state.paused is True
         progress_lines = str(app.query_one("#progress", Static).renderable).splitlines()
@@ -758,7 +758,7 @@ async def _run_sleep_timer_ui_test(tmp_path: Path) -> None:
         await pilot.pause()
         await pilot.press("space")
         await pilot.pause()
-        assert app.sleep_timer_remaining_ms == 30 * 60 * 1000
+        assert app._sleep_timer.remaining == 30 * 60 * 1000
 
         await pilot.press("t")
         await pilot.pause()
@@ -766,7 +766,7 @@ async def _run_sleep_timer_ui_test(tmp_path: Path) -> None:
         assert isinstance(sleep_modal, SleepTimerModal)
         await pilot.press("down", "down")
         await pilot.pause()
-        assert app.sleep_timer_remaining_ms is None
+        assert app._sleep_timer.remaining is None
         sleep_content = sleep_modal.query_one("#sleep-timer-content", Static)
         assert "Off" in _renderable_plain_text(sleep_content.renderable)
         await pilot.press("escape")
