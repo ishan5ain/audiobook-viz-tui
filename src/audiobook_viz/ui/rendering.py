@@ -10,20 +10,7 @@ from rich.text import Text
 from textual.widgets import Static
 
 from audiobook_viz.subtitles import SubtitleBookPage, SubtitleBookLine, SubtitleTimeline
-from audiobook_viz.ui.constants import (
-    DENSITY_MAX,
-    DENSITY_MIN,
-    MAX_CONTEXT,
-    MAX_FONT_SCALE,
-    MIN_BAR_WIDTH,
-    MIN_CONTEXT,
-    MIN_FONT_SCALE,
-    MIN_FONT_SCALED_WIDTH,
-    MIN_LINE_BUDGET,
-    MIN_PROGRESS_BAR_WIDTH,
-    MIN_SUBTITLE_PANEL_HEIGHT,
-    MIN_WRAP_WIDTH,
-)
+from audiobook_viz.ui.constants import _default_config
 from audiobook_viz.ui.enums import SubtitleDisplayMode
 
 
@@ -100,8 +87,8 @@ class SubtitleRenderer:
         return Group(*styled_blocks)
 
     def _format_cue_text(self, text: str, *, font_scale: float, is_active: bool, accent_color: str) -> Text:
-        available_width = max(MIN_WRAP_WIDTH, 80 - 10)
-        scaled_width = max(MIN_FONT_SCALED_WIDTH, int(available_width / font_scale))
+        available_width = max(_default_config.min_wrap_width, 80 - 10)
+        scaled_width = max(_default_config.min_font_scaled_width, int(available_width / font_scale))
         wrapped_lines: list[str] = []
         for line in text.splitlines() or [""]:
             wrapped_lines.extend(textwrap.wrap(line, width=scaled_width) or [""])
@@ -147,8 +134,8 @@ def _book_layout_metrics(panel_width: int, panel_height: int, page_density: floa
     base_width = max(24, panel_width - 8)
     density_width = min(1.0, page_density)
     wrap_width = max(18, int((base_width * density_width) / font_scale))
-    panel_height = max(MIN_SUBTITLE_PANEL_HEIGHT, panel_height - 4)
-    line_budget = max(MIN_LINE_BUDGET, int(panel_height / font_scale))
+    panel_height = max(_default_config.min_subtitle_panel_height, panel_height - 4)
+    line_budget = max(_default_config.min_line_budget, int(panel_height / font_scale))
     return wrap_width, line_budget
 
 

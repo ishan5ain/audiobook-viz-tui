@@ -10,7 +10,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Input, Static
 
 from audiobook_viz.colors import normalize_help_accent_color
-from audiobook_viz.ui.constants import POLL_INTERVAL, SLEEP_TIMER_STEP_MS
+from audiobook_viz.ui.constants import _default_config
 from audiobook_viz.ui.rendering import _help_modal_renderable, _sleep_timer_modal_renderable
 from audiobook_viz.ui.sleep_timer import SleepTimer
 
@@ -121,14 +121,14 @@ class SleepTimerModal(ModalScreen[None]):
     def on_mount(self) -> None:
         self.selected_duration_ms = self._app()._sleep_timer.remaining or 0
         self._refresh_content()
-        self._refresh_handle = self.set_interval(POLL_INTERVAL, self._refresh_content)
+        self._refresh_handle = self.set_interval(_default_config.poll_interval, self._refresh_content)
 
     def action_increase_sleep_timer(self) -> None:
-        self.selected_duration_ms += SLEEP_TIMER_STEP_MS
+        self.selected_duration_ms += _default_config.sleep_timer_step_ms
         self._refresh_content()
 
     def action_decrease_sleep_timer(self) -> None:
-        self.selected_duration_ms = max(0, self.selected_duration_ms - SLEEP_TIMER_STEP_MS)
+        self.selected_duration_ms = max(0, self.selected_duration_ms - _default_config.sleep_timer_step_ms)
         if self.selected_duration_ms == 0:
             self._app().cancel_sleep_timer()
         self._refresh_content()

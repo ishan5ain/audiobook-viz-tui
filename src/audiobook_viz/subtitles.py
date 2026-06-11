@@ -13,16 +13,32 @@ _VTT_TIMESTAMP = re.compile(
     r"^(?:(?P<h>\d{2,}):)?(?P<m>\d{2}):(?P<s>\d{2})\.(?P<ms>\d{3})$"
 )
 
-# --- Constants ---
+# --- Configuration ---
 
-PARAGRAPH_SPLIT_GAP_THRESHOLD_MS = 1500
-PARAGRAPH_SPLIT_CHAR_THRESHOLD = 260
-PARAGRAPH_SPLIT_CHAR_THRESHOLD_LOW = 180
-PARAGRAPH_SPLIT_WORD_THRESHOLD = 32
-PARAGRAPH_SPLIT_GAP_THRESHOLD_LOW_MS = 700
+from dataclasses import dataclass, field
 
-MIN_WRAP_WIDTH = 18
-MIN_LINE_BUDGET = 3
+
+@dataclass(frozen=True)
+class SubtitleConfig:
+    paragraph_split_gap_threshold_ms: int = 1500
+    paragraph_split_char_threshold: int = 260
+    paragraph_split_char_threshold_low: int = 180
+    paragraph_split_word_threshold: int = 32
+    paragraph_split_gap_threshold_low_ms: int = 700
+    min_wrap_width: int = 18
+    min_line_budget: int = 3
+
+
+default_config = SubtitleConfig()
+
+# Backwards-compatible aliases for internal use during migration.
+PARAGRAPH_SPLIT_GAP_THRESHOLD_MS: int = default_config.paragraph_split_gap_threshold_ms
+PARAGRAPH_SPLIT_CHAR_THRESHOLD: int = default_config.paragraph_split_char_threshold
+PARAGRAPH_SPLIT_CHAR_THRESHOLD_LOW: int = default_config.paragraph_split_char_threshold_low
+PARAGRAPH_SPLIT_WORD_THRESHOLD: int = default_config.paragraph_split_word_threshold
+PARAGRAPH_SPLIT_GAP_THRESHOLD_LOW_MS: int = default_config.paragraph_split_gap_threshold_low_ms
+MIN_WRAP_WIDTH: int = default_config.min_wrap_width
+MIN_LINE_BUDGET: int = default_config.min_line_budget
 
 
 class SubtitleParseError(RuntimeError):

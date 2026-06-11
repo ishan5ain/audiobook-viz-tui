@@ -15,26 +15,7 @@ from audiobook_viz.models import MediaMetadata, PlaybackState, ResumeState
 from audiobook_viz.playback import PlaybackBackend, PlaybackError
 from audiobook_viz.state import StateStore
 from audiobook_viz.subtitles import SubtitleTimeline
-from audiobook_viz.ui.constants import (
-    CHAPTER_CLOCK_THRESHOLD_MS,
-    DENSITY_MAX,
-    DENSITY_MIN,
-    MAX_CONTEXT,
-    MAX_FONT_SCALE,
-    MIN_BAR_WIDTH,
-    MIN_CONTEXT,
-    MIN_FONT_SCALE,
-    MIN_FONT_SCALED_WIDTH,
-    MIN_LINE_BUDGET,
-    MIN_PROGRESS_BAR_WIDTH,
-    MIN_SUBTITLE_PANEL_HEIGHT,
-    MIN_WRAP_WIDTH,
-    POLL_INTERVAL,
-    SEEK_SECONDS,
-    SUBTITLE_OFFSET_STEP_MS,
-    SLEEP_TIMER_STEP_MS,
-    _HELP_BAR_ITEMS,
-)
+from audiobook_viz.ui.constants import _default_config, _HELP_BAR_ITEMS
 from audiobook_viz.ui.enums import SubtitleDisplayMode
 from audiobook_viz.ui.modals import HelpModal, SleepTimerModal
 from audiobook_viz.ui.rendering import SubtitleRenderer, SubtitleViewState, _build_key_value_row
@@ -243,12 +224,12 @@ class AudiobookVizApp(App[None]):
         self.state_store = state_store
         self.resume_enabled = resume_enabled
         self.time_source = time_source
-        self.font_scale = max(MIN_FONT_SCALE, initial_font_scale)
+        self.font_scale = max(_default_config.min_font_scale, initial_font_scale)
         self.subtitle_offset_ms = initial_subtitle_offset_ms
-        self.subtitle_context_before = max(MIN_CONTEXT, initial_subtitle_context_before)
-        self.subtitle_context_after = max(MIN_CONTEXT, initial_subtitle_context_after)
+        self.subtitle_context_before = max(_default_config.min_context, initial_subtitle_context_before)
+        self.subtitle_context_after = max(_default_config.min_context, initial_subtitle_context_after)
         self.subtitle_display_mode: SubtitleDisplayMode = initial_subtitle_display_mode
-        self.book_page_density = min(DENSITY_MAX, max(DENSITY_MIN, round(initial_book_page_density, 1)))
+        self.book_page_density = min(_default_config.density_max, max(_default_config.density_min, round(initial_book_page_density, 1)))
         try:
             self.help_accent_color = normalize_help_accent_color(initial_help_accent_color)
         except ValueError:
@@ -291,18 +272,18 @@ class AudiobookVizApp(App[None]):
             chapter_list.index = 0
         self._refresh_ui()
         self._poll_backend()
-        self._poll_handle = self.set_interval(POLL_INTERVAL, self._poll_backend)
+        self._poll_handle = self.set_interval(_default_config.poll_interval, self._poll_backend)
 
     def action_toggle_playback(self) -> None:
         self.playback_backend.play_pause()
         self._poll_backend()
 
     def action_seek_backward(self) -> None:
-        self.playback_backend.seek_relative(-SEEK_SECONDS)
+        self.playback_backend.seek_relative(-_default_config.seek_seconds)
         self._poll_backend()
 
     def action_seek_forward(self) -> None:
-        self.playback_backend.seek_relative(SEEK_SECONDS)
+        self.playback_backend.seek_relative(_default_config.seek_seconds)
         self._poll_backend()
 
     def action_previous_chapter(self) -> None:
@@ -336,22 +317,22 @@ class AudiobookVizApp(App[None]):
         self._dispatch_context_action("subtitle_context_after", -1)
 
     def action_increase_font_scale(self) -> None:
-        self.font_scale = min(MAX_FONT_SCALE, round(self.font_scale + 0.2, 2))
+        self.font_scale = min(_default_config.max_font_scale, round(self.font_scale + 0.2, 2))
         self._refresh_subtitle()
         self._refresh_progress()
 
     def action_decrease_font_scale(self) -> None:
-        self.font_scale = max(MIN_FONT_SCALE, round(self.font_scale - 0.2, 2))
+        self.font_scale = max(_default_config.min_font_scale, round(self.font_scale - 0.2, 2))
         self._refresh_subtitle()
         self._refresh_progress()
 
     def action_subtitle_offset_down(self) -> None:
-        self.subtitle_offset_ms -= SUBTITLE_OFFSET_STEP_MS
+        self.subtitle_offset_ms -= _default_config.subtitle_offset_step_ms
         self._refresh_subtitle()
         self._refresh_progress()
 
     def action_subtitle_offset_up(self) -> None:
-        self.subtitle_offset_ms += SUBTITLE_OFFSET_STEP_MS
+        self.subtitle_offset_ms += _default_config.subtitle_offset_step_ms
         self._refresh_subtitle()
         self._refresh_progress()
 
@@ -565,7 +546,7 @@ class AudiobookVizApp(App[None]):
         )
 
     def _adjust_book_page_density(self, delta: float) -> None:
-        self.book_page_density = min(DENSITY_MAX, max(DENSITY_MIN, round(self.book_page_density + delta, 1)))
+        self.book_page_density = min(_default_config.density_max, max(_default_config.density_min, round(self.book_page_density + delta, 1)))
         self._refresh_subtitle()
         self._refresh_progress()
 
@@ -574,7 +555,7 @@ class AudiobookVizApp(App[None]):
             self._adjust_book_page_density(0.1 * delta)
             return
         current = getattr(self, attr)
-        setattr(self, attr, min(MAX_CONTEXT, max(MIN_CONTEXT, current + delta)))
+        setattr(self, attr, min(_default_config.max_context, max(_default_config.min_context, current + delta)))
         self._refresh_subtitle()
         self._refresh_progress()
 
@@ -648,7 +629,7 @@ class AudiobookVizApp(App[None]):
         reserved_width = len(status_prefix) + len(time_label) + 10
         if extra_label is not None:
             reserved_width += len(extra_label) + 2
-        available_width = max(MIN_PROGRESS_BAR_WIDTH, row_width - reserved_width)
+        available_width = max(_default_config.min_progress_bar_width, row_width - reserved_width)
         return self._render_progress_bar(position_ms, duration_ms, width=available_width)
 
     def _build_chapter_progress_bar(
@@ -665,7 +646,7 @@ class AudiobookVizApp(App[None]):
         return self._render_progress_bar(position_ms, duration_ms, width=available_width)
 
     def _render_progress_bar(self, position_ms: int, duration_ms: int, *, width: int) -> str:
-        width = max(MIN_BAR_WIDTH, width)
+        width = max(_default_config.min_bar_width, width)
         if duration_ms <= 0:
             return "░" * width
         ratio = min(1.0, max(0.0, position_ms / duration_ms))
@@ -679,7 +660,7 @@ class AudiobookVizApp(App[None]):
         return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
     def _format_chapter_progress_clock(self, position_ms: int, duration_ms: int) -> str:
-        if position_ms < CHAPTER_CLOCK_THRESHOLD_MS and duration_ms < CHAPTER_CLOCK_THRESHOLD_MS:
+        if position_ms < _default_config.chapter_clock_threshold_ms and duration_ms < _default_config.chapter_clock_threshold_ms:
             return (
                 f"{self._format_minutes_seconds(position_ms)} / "
                 f"{self._format_minutes_seconds(duration_ms)}"

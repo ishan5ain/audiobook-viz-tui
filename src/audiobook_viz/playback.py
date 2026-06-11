@@ -5,6 +5,7 @@ import socket
 import subprocess
 import tempfile
 import time
+from dataclasses import dataclass
 from pathlib import Path
 import shutil
 from typing import Protocol
@@ -12,6 +13,18 @@ from typing import Protocol
 from audiobook_viz.models import PlaybackState
 
 _TRANSIENT_PROPERTY_ERRORS = frozenset({"property unavailable"})
+
+
+@dataclass(frozen=True)
+class PlaybackConfig:
+    socket_timeout: float = 3.0
+    socket_retry_delay: float = 0.05
+    process_wait_timeout: float = 1.0
+    startup_deadline: float = 3.0
+    startup_retry_delay: float = 0.05
+
+
+default_config = PlaybackConfig()
 
 
 class PlaybackError(RuntimeError):
@@ -51,7 +64,7 @@ def ensure_mpv_available(mpv_bin: str = "mpv") -> None:
 
 
 class UnixSocketTransport:
-    def __init__(self, socket_path: Path, timeout: float = 3.0) -> None:
+    def __init__(self, socket_path: Path, timeout: float = default_config.socket_timeout) -> None:
         deadline = time.monotonic() + timeout
         self._socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         last_error: OSError | None = None
@@ -61,7 +74,7 @@ class UnixSocketTransport:
                 break
             except OSError as exc:
                 last_error = exc
-                time.sleep(0.05)
+                time.sleep(default_config.socket_retry_delay)
         else:
             self._socket.close()
             raise PlaybackError(f"Unable to connect to mpv IPC socket: {last_error}")
@@ -191,11 +204,11 @@ class MpvBackend:
             self._transport.close()
         if self._process is not None:
             try:
-                self._process.wait(timeout=1.0)
+                self._process.wait(timeout=default_config.process_wait_timeout)
             except subprocess.TimeoutExpired:
                 self._process.terminate()
                 try:
-                    self._process.wait(timeout=1.0)
+                    self._process.wait(timeout=default_config.process_wait_timeout)
                 except subprocess.TimeoutExpired:
                     self._process.kill()
         if self._socket_dir is not None:
@@ -256,13 +269,13 @@ class MpvBackend:
             stderr=subprocess.DEVNULL,
             text=True,
         )
-        deadline = time.monotonic() + 3.0
+        deadline = time.monotonic() + default_config.startup_deadline
         while time.monotonic() < deadline:
             if socket_path.exists():
                 break
             if self._process.poll() is not None:
                 raise PlaybackError("mpv exited before the IPC socket became available.")
-            time.sleep(0.05)
+            time.sleep(default_config.startup_retry_delay)
         else:
             raise PlaybackError("Timed out waiting for mpv IPC socket.")
         return UnixSocketTransport(socket_path)
