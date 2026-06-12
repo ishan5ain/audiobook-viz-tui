@@ -1,12 +1,9 @@
 from __future__ import annotations
 
 import time
-import textwrap
 from collections.abc import Callable
 from pathlib import Path
 
-from rich.align import Align
-from rich.console import Group
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -17,30 +14,12 @@ from audiobook_viz.colors import DEFAULT_HELP_ACCENT_COLOR, normalize_help_accen
 from audiobook_viz.models import MediaMetadata, PlaybackState, ResumeState
 from audiobook_viz.playback import PlaybackBackend, PlaybackError
 from audiobook_viz.state import StateStore
-from audiobook_viz.subtitles import SubtitleBookPage, SubtitleBookLine, SubtitleTimeline
-from audiobook_viz.ui.constants import (
-    CHAPTER_CLOCK_THRESHOLD_MS,
-    DENSITY_MAX,
-    DENSITY_MIN,
-    MAX_CONTEXT,
-    MAX_FONT_SCALE,
-    MIN_BAR_WIDTH,
-    MIN_CONTEXT,
-    MIN_FONT_SCALE,
-    MIN_FONT_SCALED_WIDTH,
-    MIN_LINE_BUDGET,
-    MIN_PROGRESS_BAR_WIDTH,
-    MIN_SUBTITLE_PANEL_HEIGHT,
-    MIN_WRAP_WIDTH,
-    POLL_INTERVAL,
-    SEEK_SECONDS,
-    SUBTITLE_OFFSET_STEP_MS,
-    SLEEP_TIMER_STEP_MS,
-    _HELP_BAR_ITEMS,
-)
+from audiobook_viz.subtitles import SubtitleTimeline
+from audiobook_viz.ui.constants import _default_config, _HELP_BAR_ITEMS
 from audiobook_viz.ui.enums import SubtitleDisplayMode
 from audiobook_viz.ui.modals import HelpModal, SleepTimerModal
-from audiobook_viz.ui.rendering import _build_key_value_row
+from audiobook_viz.ui.rendering import SubtitleRenderer, SubtitleViewState, _build_key_value_row
+from audiobook_viz.ui.sleep_timer import SleepTimer
 
 
 class AudiobookVizApp(App[None]):
@@ -245,12 +224,12 @@ class AudiobookVizApp(App[None]):
         self.state_store = state_store
         self.resume_enabled = resume_enabled
         self.time_source = time_source
-        self.font_scale = max(MIN_FONT_SCALE, initial_font_scale)
+        self.font_scale = max(_default_config.min_font_scale, initial_font_scale)
         self.subtitle_offset_ms = initial_subtitle_offset_ms
-        self.subtitle_context_before = max(MIN_CONTEXT, initial_subtitle_context_before)
-        self.subtitle_context_after = max(MIN_CONTEXT, initial_subtitle_context_after)
+        self.subtitle_context_before = max(_default_config.min_context, initial_subtitle_context_before)
+        self.subtitle_context_after = max(_default_config.min_context, initial_subtitle_context_after)
         self.subtitle_display_mode: SubtitleDisplayMode = initial_subtitle_display_mode
-        self.book_page_density = min(DENSITY_MAX, max(DENSITY_MIN, round(initial_book_page_density, 1)))
+        self.book_page_density = min(_default_config.density_max, max(_default_config.density_min, round(initial_book_page_density, 1)))
         try:
             self.help_accent_color = normalize_help_accent_color(initial_help_accent_color)
         except ValueError:
@@ -268,8 +247,8 @@ class AudiobookVizApp(App[None]):
         self._backend_loading = True
         self._backend_error_message: str | None = None
         self._chapter_labels: list[Label] = []
-        self.sleep_timer_remaining_ms: int | None = None
-        self._sleep_timer_last_tick_at: float | None = None
+        self._subtitle_renderer = SubtitleRenderer()
+        self._sleep_timer = SleepTimer(time_source=time_source)
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -293,18 +272,18 @@ class AudiobookVizApp(App[None]):
             chapter_list.index = 0
         self._refresh_ui()
         self._poll_backend()
-        self._poll_handle = self.set_interval(POLL_INTERVAL, self._poll_backend)
+        self._poll_handle = self.set_interval(_default_config.poll_interval, self._poll_backend)
 
     def action_toggle_playback(self) -> None:
         self.playback_backend.play_pause()
         self._poll_backend()
 
     def action_seek_backward(self) -> None:
-        self.playback_backend.seek_relative(-SEEK_SECONDS)
+        self.playback_backend.seek_relative(-_default_config.seek_seconds)
         self._poll_backend()
 
     def action_seek_forward(self) -> None:
-        self.playback_backend.seek_relative(SEEK_SECONDS)
+        self.playback_backend.seek_relative(_default_config.seek_seconds)
         self._poll_backend()
 
     def action_previous_chapter(self) -> None:
@@ -338,22 +317,22 @@ class AudiobookVizApp(App[None]):
         self._dispatch_context_action("subtitle_context_after", -1)
 
     def action_increase_font_scale(self) -> None:
-        self.font_scale = min(MAX_FONT_SCALE, round(self.font_scale + 0.2, 2))
+        self.font_scale = min(_default_config.max_font_scale, round(self.font_scale + 0.2, 2))
         self._refresh_subtitle()
         self._refresh_progress()
 
     def action_decrease_font_scale(self) -> None:
-        self.font_scale = max(MIN_FONT_SCALE, round(self.font_scale - 0.2, 2))
+        self.font_scale = max(_default_config.min_font_scale, round(self.font_scale - 0.2, 2))
         self._refresh_subtitle()
         self._refresh_progress()
 
     def action_subtitle_offset_down(self) -> None:
-        self.subtitle_offset_ms -= SUBTITLE_OFFSET_STEP_MS
+        self.subtitle_offset_ms -= _default_config.subtitle_offset_step_ms
         self._refresh_subtitle()
         self._refresh_progress()
 
     def action_subtitle_offset_up(self) -> None:
-        self.subtitle_offset_ms += SUBTITLE_OFFSET_STEP_MS
+        self.subtitle_offset_ms += _default_config.subtitle_offset_step_ms
         self._refresh_subtitle()
         self._refresh_progress()
 
@@ -379,17 +358,12 @@ class AudiobookVizApp(App[None]):
             self._refresh_subtitle()
 
     def set_sleep_timer_duration_ms(self, duration_ms: int | None) -> None:
-        if duration_ms is None or duration_ms <= 0:
-            self.sleep_timer_remaining_ms = None
-            self._sleep_timer_last_tick_at = None
-        else:
-            self.sleep_timer_remaining_ms = duration_ms
-            self._sleep_timer_last_tick_at = self.time_source()
+        self._sleep_timer.set_duration(duration_ms)
         if self.is_mounted and self._screen_stack:
             self._refresh_progress()
 
     def cancel_sleep_timer(self) -> None:
-        self.set_sleep_timer_duration_ms(None)
+        self._sleep_timer.set_duration(None)
 
     def action_toggle_chapters(self) -> None:
         if not self.metadata.chapters:
@@ -500,27 +474,20 @@ class AudiobookVizApp(App[None]):
         self.query_one("#now_playing", Static).update(f"{audiobook_name}\n\n{chapter_line}")
 
     def _refresh_subtitle(self) -> None:
-        if self.subtitle_display_mode == SubtitleDisplayMode.BOOK:
-            wrap_width, line_budget = self._book_layout_metrics()
-            page, active_index = self.timeline.book_page_at(
-                self.playback_state.position_ms,
-                subtitle_offset_ms=self.subtitle_offset_ms,
-                wrap_width=wrap_width,
-                line_budget=line_budget,
-                page_density=self.book_page_density,
-            )
-            renderable = self._build_book_subtitle_renderable(page, active_index)
-            aligned = Align.left(renderable, vertical="top")
-        else:
-            cues, active_index = self.timeline.window_at(
-                self.playback_state.position_ms,
-                subtitle_offset_ms=self.subtitle_offset_ms,
-                before_count=self.subtitle_context_before,
-                after_count=self.subtitle_context_after,
-            )
-            renderable = self._build_window_subtitle_renderable(cues, active_index)
-            aligned = Align.center(renderable, vertical="middle")
-        self.query_one("#subtitle-panel", Static).update(aligned)
+        state = SubtitleViewState(
+            font_scale=self.font_scale,
+            book_page_density=self.book_page_density,
+            help_accent_color=self.help_accent_color,
+            subtitle_display_mode=self.subtitle_display_mode,
+            subtitle_offset_ms=self.subtitle_offset_ms,
+            subtitle_context_before=self.subtitle_context_before,
+            subtitle_context_after=self.subtitle_context_after,
+            panel_width=self.query_one("#subtitle-panel", Static).size.width,
+            panel_height=self.query_one("#subtitle-panel", Static).size.height,
+        )
+        self.query_one("#subtitle-panel", Static).update(
+            self._subtitle_renderer.render(self.timeline, self.playback_state.position_ms, state)
+        )
 
     def _refresh_progress(self) -> None:
         duration_ms = max(self.playback_state.duration_ms, self.metadata.duration_ms)
@@ -571,62 +538,6 @@ class AudiobookVizApp(App[None]):
             prefix = "▶ " if chapter.index == current_index else "  "
             label.update(f"{prefix}{chapter.title}")
 
-    def _build_window_subtitle_renderable(self, cues: list, active_index: int | None) -> Group | Text:
-        if not cues:
-            return Text("...", justify="center", style="dim")
-
-        styled_blocks: list[Text] = []
-        for index, cue in enumerate(cues):
-            is_active = active_index == index
-            styled_blocks.append(
-                self._format_cue_text(
-                    cue.text,
-                    is_active=is_active,
-                )
-            )
-        return Group(*styled_blocks)
-
-    def _format_cue_text(self, text: str, *, is_active: bool) -> Text:
-        available_width = max(MIN_WRAP_WIDTH, self.size.width - 10)
-        scaled_width = max(MIN_FONT_SCALED_WIDTH, int(available_width / self.font_scale))
-        wrapped_lines: list[str] = []
-        for line in text.splitlines() or [""]:
-            wrapped_lines.extend(textwrap.wrap(line, width=scaled_width) or [""])
-        vertical_padding = max(0, int(round((self.font_scale - 1.0) * 2)))
-        padding = [""] * vertical_padding
-        block_lines = padding + wrapped_lines + padding
-        style = f"bold {self.help_accent_color} on #21414f" if is_active else "dim #9cb2c7"
-        return Text("\n".join(block_lines), justify="center", style=style)
-
-    def _build_book_subtitle_renderable(
-        self,
-        page: SubtitleBookPage | None,
-        active_cue_index: int | None,
-    ) -> Group | Text:
-        if page is None or not page.lines:
-            return Text("...", justify="left", style="dim")
-
-        blocks: list[Text] = []
-        for line in page.lines:
-            blocks.append(self._format_book_line(line, active_cue_index))
-        return Group(*blocks)
-
-    def _format_book_line(
-        self,
-        line: SubtitleBookLine,
-        active_cue_index: int | None,
-    ) -> Text:
-        if not line.fragments:
-            return Text("")
-
-        rendered = Text(justify="left")
-        default_style = "#c7d5e0"
-        active_style = f"bold {self.help_accent_color} on #21414f"
-        for fragment in line.fragments:
-            style = active_style if fragment.cue_index == active_cue_index else default_style
-            rendered.append(fragment.text, style=style)
-        return rendered
-
     def _subtitle_progress_details(self) -> str:
         if self.subtitle_display_mode == SubtitleDisplayMode.BOOK:
             return f"Mode book  Book density x{self.book_page_density:.1f}"
@@ -634,17 +545,8 @@ class AudiobookVizApp(App[None]):
             f"Mode window  Ctx {self.subtitle_context_before}/{self.subtitle_context_after}"
         )
 
-    def _book_layout_metrics(self) -> tuple[int, int]:
-        subtitle_widget = self.query_one("#subtitle-panel", Static)
-        base_width = max(24, subtitle_widget.size.width - 8)
-        density_width = min(1.0, self.book_page_density)
-        wrap_width = max(18, int((base_width * density_width) / self.font_scale))
-        panel_height = max(MIN_SUBTITLE_PANEL_HEIGHT, subtitle_widget.size.height - 4)
-        line_budget = max(MIN_LINE_BUDGET, int(panel_height / self.font_scale))
-        return wrap_width, line_budget
-
     def _adjust_book_page_density(self, delta: float) -> None:
-        self.book_page_density = min(DENSITY_MAX, max(DENSITY_MIN, round(self.book_page_density + delta, 1)))
+        self.book_page_density = min(_default_config.density_max, max(_default_config.density_min, round(self.book_page_density + delta, 1)))
         self._refresh_subtitle()
         self._refresh_progress()
 
@@ -653,7 +555,7 @@ class AudiobookVizApp(App[None]):
             self._adjust_book_page_density(0.1 * delta)
             return
         current = getattr(self, attr)
-        setattr(self, attr, min(MAX_CONTEXT, max(MIN_CONTEXT, current + delta)))
+        setattr(self, attr, min(_default_config.max_context, max(_default_config.min_context, current + delta)))
         self._refresh_subtitle()
         self._refresh_progress()
 
@@ -727,7 +629,7 @@ class AudiobookVizApp(App[None]):
         reserved_width = len(status_prefix) + len(time_label) + 10
         if extra_label is not None:
             reserved_width += len(extra_label) + 2
-        available_width = max(MIN_PROGRESS_BAR_WIDTH, row_width - reserved_width)
+        available_width = max(_default_config.min_progress_bar_width, row_width - reserved_width)
         return self._render_progress_bar(position_ms, duration_ms, width=available_width)
 
     def _build_chapter_progress_bar(
@@ -744,7 +646,7 @@ class AudiobookVizApp(App[None]):
         return self._render_progress_bar(position_ms, duration_ms, width=available_width)
 
     def _render_progress_bar(self, position_ms: int, duration_ms: int, *, width: int) -> str:
-        width = max(MIN_BAR_WIDTH, width)
+        width = max(_default_config.min_bar_width, width)
         if duration_ms <= 0:
             return "░" * width
         ratio = min(1.0, max(0.0, position_ms / duration_ms))
@@ -758,7 +660,7 @@ class AudiobookVizApp(App[None]):
         return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
     def _format_chapter_progress_clock(self, position_ms: int, duration_ms: int) -> str:
-        if position_ms < CHAPTER_CLOCK_THRESHOLD_MS and duration_ms < CHAPTER_CLOCK_THRESHOLD_MS:
+        if position_ms < _default_config.chapter_clock_threshold_ms and duration_ms < _default_config.chapter_clock_threshold_ms:
             return (
                 f"{self._format_minutes_seconds(position_ms)} / "
                 f"{self._format_minutes_seconds(duration_ms)}"
@@ -771,50 +673,26 @@ class AudiobookVizApp(App[None]):
         return f"{minutes:02d}:{seconds:02d}"
 
     def _update_sleep_timer(self, now: float) -> None:
-        if self.sleep_timer_remaining_ms is None:
-            self._sleep_timer_last_tick_at = None
-            return
         if self._backend_loading or self._backend_error_message is not None or self.playback_state.paused:
-            self._sleep_timer_last_tick_at = now
+            self._sleep_timer.tick(now, playing=False)
             return
-        if self._sleep_timer_last_tick_at is None:
-            self._sleep_timer_last_tick_at = now
-            return
-        elapsed_ms = max(0, int((now - self._sleep_timer_last_tick_at) * 1000))
-        self._sleep_timer_last_tick_at = now
-        if elapsed_ms <= 0:
-            return
-        remaining_ms = self.sleep_timer_remaining_ms - elapsed_ms
-        if remaining_ms > 0:
-            self.sleep_timer_remaining_ms = remaining_ms
-            return
-        self.sleep_timer_remaining_ms = None
-        self._sleep_timer_last_tick_at = None
-        try:
-            self.playback_backend.set_pause(True)
-            self.playback_state = PlaybackState(
-                position_ms=self.playback_state.position_ms,
-                duration_ms=self.playback_state.duration_ms,
-                paused=True,
-                chapter_index=self.playback_state.chapter_index,
-            )
-        except PlaybackError as exc:
-            self._backend_error_message = str(exc)
+        self._sleep_timer.tick(now, playing=True)
+        if self._sleep_timer.state == SleepTimer.State.EXPIRED:
+            try:
+                self.playback_backend.set_pause(True)
+                self.playback_state = PlaybackState(
+                    position_ms=self.playback_state.position_ms,
+                    duration_ms=self.playback_state.duration_ms,
+                    paused=True,
+                    chapter_index=self.playback_state.chapter_index,
+                )
+            except PlaybackError as exc:
+                self._backend_error_message = str(exc)
 
     def _sleep_timer_progress_label(self) -> str | None:
-        if self.sleep_timer_remaining_ms is None:
+        if self._sleep_timer.remaining is None:
             return None
-        return f"Sleep {self._format_sleep_timer_duration(self.sleep_timer_remaining_ms)}"
+        return f"Sleep {self._sleep_timer.format_remaining()}"
 
     def _sleep_timer_current_state_label(self) -> str:
-        if self.sleep_timer_remaining_ms is None:
-            return "Off"
-        return self._format_sleep_timer_duration(self.sleep_timer_remaining_ms)
-
-    def _format_sleep_timer_duration(self, value_ms: int) -> str:
-        total_seconds = max(0, (value_ms + 999) // 1000)
-        hours, remainder = divmod(total_seconds, 3600)
-        minutes, seconds = divmod(remainder, 60)
-        if hours > 0:
-            return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-        return f"{minutes:02d}:{seconds:02d}"
+        return self._sleep_timer.format_remaining()

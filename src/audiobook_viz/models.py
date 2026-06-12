@@ -2,8 +2,24 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from audiobook_viz.colors import DEFAULT_HELP_ACCENT_COLOR, normalize_help_accent_color
+
+if TYPE_CHECKING:
+    from audiobook_viz.ui.enums import SubtitleDisplayMode
+
+
+@dataclass(slots=True, frozen=True)
+class StartupConfig:
+    subtitle_offset_ms: int
+    font_scale: float
+    subtitle_context_before: int
+    subtitle_context_after: int
+    subtitle_display_mode: SubtitleDisplayMode
+    book_page_density: float
+    help_accent_color: str
+    start_position_ms: int | None
 
 
 @dataclass(slots=True, frozen=True)
