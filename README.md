@@ -26,13 +26,13 @@ Implemented today:
 - subtitle rendering modes for both cue-window and book-style reading
 - chapter-local and whole-book progress display
 - persisted resume state for playback position, chapter, subtitle settings, subtitle mode, book density, and accent color
-- automated test coverage for playback, subtitles, UI behavior, CLI parsing, and state loading
+- automated test coverage for playback, subtitles, UI behavior, CLI parsing, bootstrap, subtitle layout, subtitle rendering, and sleep timer state machine
 
 Known constraints:
 - requires external `mpv`
 - requires external `ffprobe`
 - book-mode paragraph grouping is heuristic-driven and based on cue gaps / text size, not full sentence parsing
-- “font size” is a terminal-safe display scaling approximation, not a real font-size change
+- "font size" is a terminal-safe display scaling approximation, not a real font-size change
 
 ## Requirements
 
@@ -89,13 +89,15 @@ CLI arguments:
 
 ## Subtitle Modes
 
-The app currently supports two subtitle display modes that can be switched at runtime:
+The app uses the `SubtitleDisplayMode` enum (`src/audiobook_viz/ui/enums.py`) with two modes switchable at runtime via `m`:
 
 - `window` mode:
   - shows the active cue with configurable cue context before and after it
   - keeps the active cue visually centered
 - `book` mode:
-  - merges adjacent short Whisper cues into paragraph-like reading text
+  - merges adjacent short Whisper cues into paragraph-like text via the two-stage pipeline in `SubtitleTimeline` and `BookLayoutEngine`
+  - **Stage 1**: cues are grouped into paragraphs based on gap heuristics (cue spacing, character/word thresholds)
+  - **Stage 2**: paragraphs are wrapped into visual lines and then sliced into pages by `BookLayoutEngine` (with cached layouts keyed by wrap width, line budget, and page density)
   - fills the subtitle pane with a fixed "page" of wrapped lines
   - moves the highlight from top to bottom as playback advances
   - turns the page when the active cue would move beyond the visible page
@@ -157,7 +159,28 @@ python3 -m compileall src tests
 
 Project layout:
 - `src/audiobook_viz/`: application code
+  - `cli.py` — argument parsing, entry point (delegates to `bootstrap()`)
+  - `bootstrap.py` — startup pipeline: validates paths, probes media, parses subtitles, resolves config from args/resume state, wires up `MpvBackend` and `AudiobookVizApp`
+  - `models.py` — core dataclasses: `StartupConfig`, `Chapter`, `MediaMetadata`, `SubtitleCue`, `PlaybackState`, `ResumeState`
+  - `playback.py` — `MpvBackend` (mpv JSON IPC), `PlaybackConfig`, `PlaybackBackend` protocol
+  - `subtitle_layout.py` — `BookLayoutEngine` (wrapped line pagination with cached layouts)
+  - `subtitles.py` — `SubtitleConfig`, `SubtitleTimeline`, `.srt`/`.vtt` parsing, book-mode data types (`SubtitleBookPage`, `SubtitleParagraph`, etc.)
+  - `media.py` — ffprobe metadata extraction
+  - `state.py` — resume state persistence
+  - `colors.py` — accent color normalization
+  - `ui/` — Textual UI layer
+    - `app.py` — `AudiobookVizApp` main widget (orchestrates rendering, delegates to subsystems)
+    - `constants.py` — `UIConfig` dataclass with backwards-compatible constant aliases
+    - `enums.py` — `SubtitleDisplayMode` enum (`WINDOW` / `BOOK`)
+    - `rendering.py` — `SubtitleRenderer` (subtitle widget rendering, extracted from `app.py`)
+    - `sleep_timer.py` — `SleepTimer` state machine (off / running / expired) with playback-aware countdown
+    - `modals.py` — `SleepTimerModal`, `HelpModal`
 - `tests/`: test suite
+  - `test_bootstrap.py` — integration tests for the bootstrap pipeline
+  - `test_sleep_timer.py` — state-machine tests for `SleepTimer`
+  - `test_subtitle_layout.py` — tests for `BookLayoutEngine` pagination
+  - `test_subtitle_rendering.py` — unit tests for `SubtitleRenderer`
+  - (plus existing test files for playback, CLI, subtitles, UI, state)
 - `.state/`: optional local runtime state when you pass `--state-dir .state`
 
 ## Future Work
