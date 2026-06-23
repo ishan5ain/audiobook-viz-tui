@@ -10,6 +10,7 @@ from pathlib import Path
 import shutil
 from typing import Protocol
 
+from audiobook_viz.debug_log import log
 from audiobook_viz.models import PlaybackState
 
 _TRANSIENT_PROPERTY_ERRORS = frozenset({"property unavailable"})
@@ -158,6 +159,7 @@ class MpvBackend:
         idle_active, idle_available = self._get_property("idle-active", default=False)
         if idle_available and bool(idle_active):
             self._state_ready = False
+            log("get_state", result="idle", chapter=-1, state_ready=False)
             return PlaybackState(
                 position_ms=0,
                 duration_ms=self._initial_duration_ms,
@@ -182,12 +184,19 @@ class MpvBackend:
                 duration_available or self._initial_duration_ms > 0,
             )
         )
-        return PlaybackState(
+        result = PlaybackState(
             position_ms=0 if position_s in (None, "") else max(0, int(float(position_s) * 1000)),
             duration_ms=duration_ms,
             paused=bool(paused),
             chapter_index=-1 if chapter_index in (None, "") else int(chapter_index),
         )
+        log("get_state",
+            chapter=result.chapter_index,
+            position=result.position_ms,
+            paused=result.paused,
+            state_ready=self._state_ready,
+            idle_active=idle_active if idle_available else "N/A")
+        return result
 
     def is_state_ready(self) -> bool:
         return self._state_ready
@@ -224,7 +233,10 @@ class MpvBackend:
             raise PlaybackError("Playback transport is not initialized.")
         self._request_id += 1
         payload = {"command": command, "request_id": self._request_id}
+        log("mpv_command", cmd=str(command), rid=self._request_id)
         response = self._transport.send(payload)
+        log("mpv_response", cmd=str(command), rid=self._request_id,
+            error=response.get("error"), data=response.get("data"))
         accepted = accepted_errors or frozenset()
         if response.get("error") not in {None, "success", *accepted}:
             raise PlaybackError(str(response.get("error")))

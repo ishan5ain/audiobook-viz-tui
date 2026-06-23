@@ -11,6 +11,7 @@ from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Header, Label, ListItem, ListView, Static
 
 from audiobook_viz.colors import DEFAULT_HELP_ACCENT_COLOR, normalize_help_accent_color
+from audiobook_viz.debug_log import log
 from audiobook_viz.models import MediaMetadata, PlaybackState, ResumeState
 from audiobook_viz.playback import PlaybackBackend, PlaybackError
 from audiobook_viz.state import StateStore
@@ -242,6 +243,7 @@ class AudiobookVizApp(App[None]):
         )
         self._chapter_drawer_open = False
         self._chapter_selection_index = 0 if metadata.chapters else None
+        self._pending_chapter_index: int | None = None
         self._player_closed = False
         self._poll_handle = None
         self._backend_loading = True
@@ -288,21 +290,73 @@ class AudiobookVizApp(App[None]):
 
     def action_previous_chapter(self) -> None:
         if not self.metadata.chapters:
+            log("action_previous_chapter", reason="no_chapters")
             return
         if self._chapter_drawer_open:
+            log("action_previous_chapter", reason="drawer_open", redirect="drawer_up")
             self.action_drawer_up()
             return
-        self.playback_backend.previous_chapter()
+        current = self._resolved_chapter_index()
+        new_index = max(0, current - 1)
+        log("action_previous_chapter",
+            before_chapter=self.playback_state.chapter_index,
+            backend_loading=self._backend_loading,
+            resolved_before=current, target=new_index)
+        chapter = self.metadata.chapters[new_index]
+        try:
+            self.playback_backend.seek_absolute(chapter.start_ms / 1000)
+            log("action_previous_chapter", backend_call="seek_absolute",
+                target_ms=chapter.start_ms)
+        except PlaybackError as exc:
+            log("action_previous_chapter", backend_call="failed", error=str(exc))
+            return
+        self._pending_chapter_index = new_index
+        self.playback_state = PlaybackState(
+            position_ms=self.playback_state.position_ms,
+            duration_ms=self.playback_state.duration_ms,
+            paused=self.playback_state.paused,
+            chapter_index=new_index,
+        )
         self._poll_backend()
+        log("action_previous_chapter",
+            after_poll_chapter=self.playback_state.chapter_index,
+            after_poll_loading=self._backend_loading,
+            pending=self._pending_chapter_index)
 
     def action_next_chapter(self) -> None:
         if not self.metadata.chapters:
+            log("action_next_chapter", reason="no_chapters")
             return
         if self._chapter_drawer_open:
+            log("action_next_chapter", reason="drawer_open", redirect="drawer_down")
             self.action_drawer_down()
             return
-        self.playback_backend.next_chapter()
+        current = self._resolved_chapter_index()
+        new_index = min(len(self.metadata.chapters) - 1, current + 1)
+        log("action_next_chapter",
+            before_chapter=self.playback_state.chapter_index,
+            backend_loading=self._backend_loading,
+            resolved_before=current, target=new_index)
+        chapter = self.metadata.chapters[new_index]
+        try:
+            self.playback_backend.seek_absolute(chapter.start_ms / 1000)
+            log("action_next_chapter", backend_call="seek_absolute",
+                target_ms=chapter.start_ms)
+        except PlaybackError as exc:
+            log("action_next_chapter", backend_call="failed", error=str(exc))
+            return
+        self._pending_chapter_index = new_index
+        self.playback_state = PlaybackState(
+            position_ms=self.playback_state.position_ms,
+            duration_ms=self.playback_state.duration_ms,
+            paused=self.playback_state.paused,
+            chapter_index=new_index,
+        )
         self._poll_backend()
+        log("action_next_chapter",
+            after_poll_chapter=self.playback_state.chapter_index,
+            after_poll_loading=self._backend_loading,
+            pending=self._pending_chapter_index)
 
     def action_increase_context_before(self) -> None:
         self._dispatch_context_action("subtitle_context_before", 1)
@@ -450,9 +504,38 @@ class AudiobookVizApp(App[None]):
             self.playback_state = self.playback_backend.get_state()
             self._backend_loading = not self.playback_backend.is_state_ready()
             self._backend_error_message = None
+            log("_poll_backend",
+                chapter=self.playback_state.chapter_index,
+                position=self.playback_state.position_ms,
+                paused=self.playback_state.paused,
+                state_ready=not self._backend_loading,
+                pending=self._pending_chapter_index)
         except PlaybackError as exc:
             self._backend_loading = True
             self._backend_error_message = str(exc)
+            log("_poll_backend", error=str(exc))
+        # Ensure no widget has focus when drawer is closed — the hidden ListView
+        # can otherwise capture up/down keys via deferred scroll_to_widget.
+        # Only clear focus on the root screen (no modals active).
+        if (not self._chapter_drawer_open
+                and self.screen.focused is not None
+                and len(self.screen_stack) <= 1):
+            self.set_focus(None)
+        # Protect optimistic chapter_index from stale mpv data
+        if self._pending_chapter_index is not None:
+            if self.playback_state.chapter_index == self._pending_chapter_index:
+                # mpv has caught up
+                log("_poll_backend", pending_cleared=True)
+                self._pending_chapter_index = None
+            else:
+                # mpv still has stale data — restore our optimistic value
+                self.playback_state = PlaybackState(
+                    position_ms=self.playback_state.position_ms,
+                    duration_ms=self.playback_state.duration_ms,
+                    paused=self.playback_state.paused,
+                    chapter_index=self._pending_chapter_index,
+                )
+                log("_poll_backend", pending_restored=True)
         self._update_sleep_timer(now)
         self._refresh_ui()
 
@@ -524,16 +607,25 @@ class AudiobookVizApp(App[None]):
         if not self.metadata.chapters:
             return
         if self._chapter_drawer_open:
+            old = self._chapter_selection_index
             self._chapter_selection_index = self.query_one("#chapter-list", ListView).index
+            log("_sync_chapter_selection", mode="drawer_open",
+                old=old, new=self._chapter_selection_index)
             return
+        old = self._chapter_selection_index
         if 0 <= self.playback_state.chapter_index < len(self.metadata.chapters):
             self._chapter_selection_index = self.playback_state.chapter_index
-            self._apply_drawer_selection()
+        else:
+            self._chapter_selection_index = self._resolved_chapter_index()
+        log("_sync_chapter_selection", mode="drawer_closed",
+            state_chapter=self.playback_state.chapter_index,
+            old=old, new=self._chapter_selection_index)
+        self._apply_drawer_selection()
 
     def _refresh_chapter_list(self) -> None:
         if not self._chapter_labels:
             return
-        current_index = self.playback_state.chapter_index
+        current_index = self._resolved_chapter_index()
         for chapter, label in zip(self.metadata.chapters, self._chapter_labels, strict=False):
             prefix = "▶ " if chapter.index == current_index else "  "
             label.update(f"{prefix}{chapter.title}")
